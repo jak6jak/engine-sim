@@ -55,7 +55,34 @@ The RPM hold feature will hold the engine at a specific RPM and also measure the
 I wrote this to demo in a [YouTube video](https://youtu.be/RKT-sKtR970), not as a real product. If you would like it to become a usable product please reach out to me or join my Discord (link can be found in the description of the aforementioned YouTube video). I use this codebase for my own purposes and so it might change frequently and without warning.
 
 ## How do I build it? (Ignore this section if you're not a developer!)
-**Note: this project currently only builds on Windows!**
+**Note: this project is now a Godot addon. The standalone Windows application has been deprecated.**
+
+### Quick Build (macOS/Linux)
+
+The project uses SCons to orchestrate the build process. Simply run:
+
+```bash
+scons platform=macos arch=arm64 target=template_debug
+```
+
+This will:
+1. Configure and build the C++ engine-core library via CMake
+2. Build the GDExtension wrapper that links to engine-core
+
+**Build Options:**
+- `platform` - Target platform (default: macos)
+- `arch` - Target architecture: arm64, x86_64 (default: arm64)
+- `target` - Build variant: template_debug, template_release (default: template_debug)
+- `cmake_only=yes` - Only build the CMake portion
+- `gdext_only=yes` - Only build the GDExtension (assumes CMake already built)
+
+**Environment Variables:**
+- `ENGINE_SIM_BUILD_DIR` - Override CMake build directory (default: addons/engine_sim/engine-core/build)
+
+**Legacy Scripts (deprecated):**
+If you prefer bash scripts, these are still available:
+- [scripts/build_all.sh](scripts/build_all.sh) (engine-sim + GDExtension)
+- [scripts/build_gdext.sh](scripts/build_gdext.sh) (GDExtension only)
 
 ### Step 1 - Clone the repository
 ```git clone --recurse-submodules https://github.com/ange-yaghi/engine-sim```

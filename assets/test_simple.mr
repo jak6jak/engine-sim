@@ -1,0 +1,7 @@
+import "engine_sim.mr"
+
+units units()
+
+node main {
+    alias output __out: units;
+}

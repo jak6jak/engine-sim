@@ -1,0 +1,177 @@
+import os
+
+from SCons.Script import (ARGUMENTS, DefaultEnvironment, Dir, Glob)
+
+# Usage (macOS arm64):
+#   scons platform=macos arch=arm64 target=template_debug
+#   scons platform=macos arch=arm64 target=template_release
+#
+# Requirements:
+# - Godot 4.x
+# - Python + scons
+# - godot-cpp cloned at ./godot-cpp (or set GODOT_CPP_PATH)
+# - engine-sim built via CMake (to produce libengine-sim-runtime.a)
+
+platform = ARGUMENTS.get("platform", "macos")
+arch = ARGUMENTS.get("arch", "arm64")
+target = ARGUMENTS.get("target", "template_debug")
+compiledb = ARGUMENTS.get("compiledb", "no")
+compiledb_file = ARGUMENTS.get("compiledb_file", "compile_commands.json")
+
+def _is_truthy(v):
+    return str(v).lower() in ("1", "y", "yes", "true", "on")
+
+compiledb_enabled = _is_truthy(compiledb)
+
+# NOTE: SCons doesn't reliably define __file__ for SConstruct execution.
+# Use SCons' filesystem nodes to locate the SConstruct directory.
+root = Dir('#').abspath
+
+# engine-core is now nested inside this addon
+engine_core_dir = os.path.join(root, "engine-core")
+
+godot_cpp_path = os.environ.get("GODOT_CPP_PATH")
+if not godot_cpp_path:
+    godot_cpp_path = os.path.join(engine_core_dir, "godot-cpp")
+
+engine_sim_build_dir = os.environ.get(
+    "ENGINE_SIM_BUILD_DIR",
+    os.path.join(engine_core_dir, "build")
+)
+
+# Homebrew default on Apple Silicon
+homebrew_prefix = os.environ.get("HOMEBREW_PREFIX", "/opt/homebrew")
+
+env = DefaultEnvironment()
+
+env["CXX"] = os.environ.get("CXX", "clang++")
+
+env.Append(CXXFLAGS=["-std=c++17", "-fPIC"])
+
+# Match godot-cpp's platform defines so Wrapped's thread-local behavior is
+# consistent between our extension objects and the linked godot-cpp archive.
+if platform == "macos":
+    env.Append(CPPDEFINES=["MACOS_ENABLED", "HOT_RELOAD_ENABLED"])
+
+env.Append(CPPPATH=[
+    os.path.join(root, "src"),
+    os.path.join(engine_core_dir, "include"),
+    os.path.join(godot_cpp_path, "include"),
+    os.path.join(godot_cpp_path, "gen", "include"),
+    os.path.join(godot_cpp_path, "godot-headers"),
+])
+
+env.Append(LIBPATH=[
+    os.path.join(godot_cpp_path, "bin"),
+    os.path.join(homebrew_prefix, "opt", "boost", "lib"),
+    os.path.join(homebrew_prefix, "lib"),
+])
+
+# Optional: compile_commands.json support (must be enabled before nodes are created).
+if compiledb_enabled:
+    try:
+        env.Tool("compilation_db")
+    except Exception as e:
+        print("WARNING: Failed to enable SCons compilation_db tool.")
+        print("Reason: %s" % e)
+        print("compile_commands.json generation will be disabled.")
+        compiledb_enabled = False
+
+# Godot symbols are resolved at runtime.
+if platform == "macos":
+    # NOTE: GDExtensions load symbols through the GDExtension interface, so we
+    # generally shouldn't need to allow undefined symbols at link time.
+    # Keeping the link strict helps catch missing godot-cpp symbols early.
+
+    # We want an exact filename ending in .dylib for the .gdextension file.
+    # SCons treats dotted names as having a suffix already, so we provide the
+    # full name ourselves and disable automatic prefix/suffix.
+    env["SHLIBPREFIX"] = ""
+    env["SHLIBSUFFIX"] = ""
+
+# Pick the appropriate godot-cpp static lib from its bin/ folder.
+# The exact name depends on the godot-cpp version.
+all_godot_cpp = [str(p) for p in Glob(os.path.join(godot_cpp_path, "bin", "libgodot-cpp*.a"))]
+if len(all_godot_cpp) == 0:
+    print("ERROR: No godot-cpp library found in %s" % os.path.join(godot_cpp_path, "bin"))
+    print("Build godot-cpp first, e.g.: scons -C godot-cpp platform=macos arch=arm64 target=%s" % target)
+    Exit(1)
+
+def choose_godot_cpp_lib():
+    # Prefer matching target+arch if present.
+    for lib in all_godot_cpp:
+        if (target in lib) and (arch in lib):
+            return lib
+    # Fallback: just take the first.
+    return all_godot_cpp[0]
+
+godot_cpp_lib = choose_godot_cpp_lib()
+
+if platform == "macos":
+    # Force-load godot-cpp to avoid missing TLS wrapper symbols at runtime
+    # when building a macOS dylib.
+    # (Without this, some godot-cpp objects may not be pulled from the archive.)
+    env.Append(LINKFLAGS=["-Wl,-force_load,%s" % godot_cpp_lib])
+
+# engine-sim static libs produced by CMake
+lib_engine_sim_runtime = os.path.join(engine_sim_build_dir, "libengine-sim-runtime.a")
+lib_engine_sim = os.path.join(engine_sim_build_dir, "libengine-sim.a")
+lib_engine_sim_script = os.path.join(engine_sim_build_dir, "libengine-sim-script-interpreter.a")
+
+lib_piranha = os.path.join(engine_sim_build_dir, "dependencies", "submodules", "piranha", "libpiranha.a")
+lib_csv_io = os.path.join(engine_sim_build_dir, "dependencies", "submodules", "csv-io", "libcsv-io.a")
+lib_scs = os.path.join(engine_sim_build_dir, "dependencies", "submodules", "simple-2d-constraint-solver", "libsimple-2d-constraint-solver.a")
+
+for required in [lib_engine_sim_runtime, lib_engine_sim, lib_piranha, lib_csv_io, lib_scs]:
+    if not os.path.exists(required):
+        print("ERROR: Missing required library: %s" % required)
+        print("Build engine-sim first: cmake --build build --target engine-sim-runtime")
+        Exit(1)
+
+sources = [str(s) for s in Glob(os.path.join(root, "src", "*.cpp"))]
+
+objs = env.SharedObject(source=sources)
+
+variant = "debug" if "debug" in target else "release"
+out_filename = "libengine_sim_gdext.%s.%s.%s.dylib" % (platform, arch, variant)
+out_target = os.path.join(root, "bin", out_filename)
+
+# Link order matters for static libs.
+# Also link Boost filesystem/system (Homebrew) for piranha.
+libs = [
+    env.File(lib_engine_sim_runtime),
+    env.File(lib_engine_sim_script),
+    env.File(lib_engine_sim),
+    env.File(lib_piranha),
+    env.File(lib_csv_io),
+    env.File(lib_scs),
+    "boost_filesystem",
+]
+
+out_lib = env.SharedLibrary(
+    target=out_target,
+    source=objs,
+    LIBS=libs,
+)
+
+# Optional: generate a Clang compilation database.
+# Usage:
+#   scons platform=macos arch=arm64 target=template_debug compiledb=yes
+if _is_truthy(compiledb):
+    try:
+        cdb_path = os.path.join(root, compiledb_file)
+        cdb_alias = env.Alias("compiledb", env.CompilationDatabase(cdb_path))
+
+        # The compilation_db tool records commands that run during this SCons
+        # invocation. If everything is already up-to-date, we'd end up with an
+        # empty database. Force the object files to rebuild when compiledb=yes.
+        env.AlwaysBuild(objs)
+
+        Default(cdb_alias)
+        print("Generated compilation database: %s" % cdb_path)
+    except Exception as e:
+        print("WARNING: Failed to enable compilation database generation.")
+        print("Reason: %s" % e)
+        print("If you need this feature, ensure you're using SCons 4.x with the 'compilation_db' tool available.")
+
+Default(out_lib)
