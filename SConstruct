@@ -46,7 +46,7 @@ from SCons.Script import (
 
 platform = ARGUMENTS.get("platform", "macos")
 arch = ARGUMENTS.get("arch", "arm64")
-target = ARGUMENTS.get("target", "template_debug")
+build_target = ARGUMENTS.get("target", "template_debug")
 cmake_only = ARGUMENTS.get("cmake_only", "no").lower() in ("1", "y", "yes", "true", "on")
 gdext_only = ARGUMENTS.get("gdext_only", "no").lower() in ("1", "y", "yes", "true", "on")
 
@@ -134,7 +134,7 @@ def build_gdextension(target, source, env):
         "-C", gdext_dir,
         f"platform={platform}",
         f"arch={arch}",
-        f"target={target}",
+        f"target={build_target}",
     ]
     
     result = subprocess.run(scons_args, cwd=root_dir)

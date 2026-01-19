@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/core/object_id.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 
 #include <vector>
@@ -56,6 +57,7 @@ public:
     
     double get_engine_speed() const;
 
+    void _notification(int p_what);
     void _process(double delta) override;
     void _physics_process(double delta) override;
 
@@ -64,11 +66,12 @@ protected:
 
 private:
     void pump_audio();
+    AudioStreamPlayer *get_audio_player() const;
 
     es_runtime_t *m_rt = nullptr;
     bool m_loaded = false;
 
-    AudioStreamPlayer *m_audio_player = nullptr;
+    ObjectID m_audio_player_id;
     Ref<AudioStreamGenerator> m_audio_generator;
     Ref<AudioStreamGeneratorPlayback> m_audio_playback;
 

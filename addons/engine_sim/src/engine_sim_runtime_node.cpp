@@ -5,13 +5,14 @@
 #include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/audio_stream_playback.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/core/object.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <vector>
 
 // Build version for debugging stale builds
-#define ENGINE_SIM_BUILD_VERSION "2026-01-19-v3-10kHz-2fluid"
+#define ENGINE_SIM_BUILD_VERSION "2026-01-19-v4-shutdownfix"
 
 // HACK: Bypass es_runtime_c to access internal simulator directly
 // and force audio sample rate to match Godot's mix rate.
@@ -34,8 +35,6 @@ EngineSimRuntime::EngineSimRuntime() {
 }
 
 EngineSimRuntime::~EngineSimRuntime() {
-    stop_audio();
-
     if (m_rt != nullptr) {
         es_runtime_mirror_t *mirror = reinterpret_cast<es_runtime_mirror_t *>(m_rt);
         if (mirror && mirror->simulator) {
@@ -45,6 +44,23 @@ EngineSimRuntime::~EngineSimRuntime() {
         es_runtime_destroy(m_rt);
         m_rt = nullptr;
     }
+}
+
+void EngineSimRuntime::_notification(int p_what) {
+    // Do Godot-object cleanup here (NOT in the destructor).
+    // The destructor can run late during engine shutdown when scene objects
+    // (like child AudioStreamPlayer nodes) may already be freed.
+    if (p_what == Node::NOTIFICATION_EXIT_TREE) {
+        stop_audio();
+    }
+}
+
+AudioStreamPlayer *EngineSimRuntime::get_audio_player() const {
+    if (m_audio_player_id == ObjectID()) {
+        return nullptr;
+    }
+    Object *obj = ObjectDB::get_instance(m_audio_player_id);
+    return Object::cast_to<AudioStreamPlayer>(obj);
 }
 
 void EngineSimRuntime::_bind_methods() {
@@ -241,17 +257,19 @@ void EngineSimRuntime::start_audio(double mix_rate, double buffer_length) {
     // Allow enough per-frame push budget to recover from hitching.
     m_audio_budget_frames = MAX(m_audio_budget_frames, m_audio_buffer_capacity_frames);
 
-    if (m_audio_player == nullptr) {
-        m_audio_player = memnew(AudioStreamPlayer);
-        m_audio_player->set_name("EngineSimAudioPlayer");
-        add_child(m_audio_player);
+    AudioStreamPlayer *audio_player = get_audio_player();
+    if (audio_player == nullptr) {
+        audio_player = memnew(AudioStreamPlayer);
+        audio_player->set_name("EngineSimAudioPlayer");
+        add_child(audio_player);
+        m_audio_player_id = ObjectID(audio_player->get_instance_id());
     }
 
     m_audio_generator.instantiate();
     m_audio_generator->set_mix_rate(mix_rate);
     m_audio_generator->set_buffer_length(buffer_length);
 
-    m_audio_player->set_stream(m_audio_generator);
+    audio_player->set_stream(m_audio_generator);
 
     // The synthesizer is now initialized at 44100 Hz in simulator.cpp,
     // so no re-initialization is needed here. This preserves the IR data.
@@ -267,9 +285,9 @@ void EngineSimRuntime::start_audio(double mix_rate, double buffer_length) {
     }
     
     // Now start playback, which will immediately begin consuming audio.
-    m_audio_player->play();
+    audio_player->play();
 
-    Ref<AudioStreamPlayback> playback = m_audio_player->get_stream_playback();
+    Ref<AudioStreamPlayback> playback = audio_player->get_stream_playback();
     m_audio_playback = playback;
     if (m_audio_playback.is_null()) {
         UtilityFunctions::printerr("engine-sim: AudioStreamGeneratorPlayback unavailable (stream playback is null)");
@@ -298,8 +316,11 @@ void EngineSimRuntime::start_audio(double mix_rate, double buffer_length) {
 }
 
 void EngineSimRuntime::stop_audio() {
-    if (m_audio_player != nullptr) {
-        m_audio_player->stop();
+    AudioStreamPlayer *audio_player = get_audio_player();
+    if (audio_player != nullptr) {
+        audio_player->stop();
+        // Break stream reference to allow generator/playback to be released.
+        audio_player->set_stream(Ref<AudioStreamGenerator>());
     }
 
     m_audio_playback.unref();
@@ -309,7 +330,8 @@ void EngineSimRuntime::stop_audio() {
 }
 
 bool EngineSimRuntime::is_audio_running() const {
-    return m_audio_player != nullptr && m_audio_player->is_playing();
+    AudioStreamPlayer *audio_player = get_audio_player();
+    return audio_player != nullptr && audio_player->is_playing();
 }
 
 void EngineSimRuntime::_process(double delta) {
