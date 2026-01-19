@@ -55,9 +55,6 @@ void Simulator::loadSimulation(Engine *engine, Vehicle *vehicle, Transmission *t
 }
 
 void Simulator::releaseSimulation() {
-    m_synthesizer.endAudioRenderingThread();
-    if (m_system != nullptr) m_system->reset();
-
     destroy();
 }
 
@@ -165,7 +162,19 @@ void Simulator::endFrame() {
 }
 
 void Simulator::destroy() {
+    m_synthesizer.endAudioRenderingThread();
     m_synthesizer.destroy();
+
+    if (m_system != nullptr) {
+        m_system->reset();
+        delete m_system;
+        m_system = nullptr;
+    }
+
+    if (m_dynoTorqueSamples != nullptr) {
+        delete[] m_dynoTorqueSamples;
+        m_dynoTorqueSamples = nullptr;
+    }
 }
 
 void Simulator::startAudioRenderingThread() {
@@ -203,11 +212,16 @@ double Simulator::getAverageOutputSignal() const {
 
 void Simulator::initializeSynthesizer() {
     Synthesizer::Parameters synthParams;
-    synthParams.audioBufferSize = 44100;
+    // Use 44100 Hz to match Godot's default mix rate
+    synthParams.audioBufferSize = 44100 * 2;  // 2 second buffer
     synthParams.audioSampleRate = 44100;
     synthParams.inputBufferSize = 44100;
     synthParams.inputChannelCount = m_engine->getExhaustSystemCount();
     synthParams.inputSampleRate = static_cast<float>(getSimulationFrequency());
+    
+    std::fprintf(stderr, "engine-sim: initializeSynthesizer: simFreq=%d inputSampleRate=%.1f audioSampleRate=%.1f channels=%d\n",
+        getSimulationFrequency(), synthParams.inputSampleRate, synthParams.audioSampleRate, synthParams.inputChannelCount);
+    
     m_synthesizer.initialize(synthParams);
 }
 

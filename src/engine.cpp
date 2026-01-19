@@ -1,4 +1,3 @@
-#include "..\include\engine.h"
 #include "../include/engine.h"
 
 #include "../include/constants.h"
@@ -388,6 +387,8 @@ Simulator *Engine::createSimulator(Vehicle *vehicle, Transmission *transmission)
     Simulator::Parameters simulatorParams;
     simulatorParams.systemType = Simulator::SystemType::NsvOptimized;
     simulator->initialize(simulatorParams);
+
+    simulator->setSimulationFrequency(getSimulationFrequency());
 
     simulator->loadSimulation(this, vehicle, transmission);
     simulator->setFluidSimulationSteps(8);

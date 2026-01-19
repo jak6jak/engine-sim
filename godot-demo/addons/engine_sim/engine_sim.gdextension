@@ -1,0 +1,7 @@
+[configuration]
+entry_symbol = "engine_sim_library_init"
+compatibility_minimum = "4.1"
+
+[libraries]
+macos.arm64.debug = "res://addons/engine_sim/bin/libengine_sim_gdext.macos.arm64.debug.dylib"
+macos.arm64.release = "res://addons/engine_sim/bin/libengine_sim_gdext.macos.arm64.release.dylib"

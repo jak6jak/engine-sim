@@ -1,10 +1,10 @@
 #include "../include/synthesizer.h"
 
 #include "../include/utilities.h"
-#include "../include/delta.h"
 
 #include <cassert>
 #include <cmath>
+#include <vector>
 
 #undef min
 #undef max
@@ -57,6 +57,11 @@ void Synthesizer::initialize(const Parameters &p) {
 
     m_filters = new ProcessingFilters[p.inputChannelCount];
     for (int i = 0; i < p.inputChannelCount; ++i) {
+        // Ensure convolution filter is always initialized so renderAudio() is safe
+        // even when no impulse response WAV was loaded (pass-through).
+        m_filters[i].convolution.initialize(1);
+        m_filters[i].convolution.getImpulseResponse()[0] = 1.0f;
+
         m_filters[i].airNoiseLowPass.setCutoffFrequency(
             m_audioParameters.airNoiseFrequencyCutoff, m_audioSampleRate);
 
@@ -70,7 +75,9 @@ void Synthesizer::initialize(const Parameters &p) {
             m_audioParameters.inputSampleNoiseFrequencyCutoff,
             m_audioSampleRate);
 
-        m_filters[i].antialiasing.setCutoffFrequency(1900.0f, m_audioSampleRate);
+        // Antialiasing for upsampled input: use ~90% of output Nyquist (44100/2 * 0.9 = ~19845)
+        // to preserve as much high frequency content as possible while avoiding aliasing.
+        m_filters[i].antialiasing.setCutoffFrequency(m_audioSampleRate * 0.45f, m_audioSampleRate);
     }
 
     m_levelingFilter.p_target = m_audioParameters.levelerTarget;
@@ -78,9 +85,8 @@ void Synthesizer::initialize(const Parameters &p) {
     m_levelingFilter.p_minLevel = m_audioParameters.levelerMinGain;
     m_antialiasing.setCutoffFrequency(m_audioSampleRate * 0.45f, m_audioSampleRate);
 
-    for (int i = 0; i < m_audioBufferSize; ++i) {
-        m_audioBuffer.write(0);
-    }
+    // Don't prefill output buffer with silence - it delays first audible output
+    // and prevents the rendering thread from running until the buffer drains.
 }
 
 void Synthesizer::initializeImpulseResponse(
@@ -96,7 +102,17 @@ void Synthesizer::initializeImpulseResponse(
         }
     }
 
-    const unsigned int sampleCount = std::min(10000U, clippedLength);
+    // Limit IR length for real-time performance. 4000 samples at 44.1kHz = ~90ms reverb.
+    const unsigned int sampleCount = std::min(4000U, clippedLength);
+    
+    std::fprintf(stderr, "engine-sim: IR index=%d clippedLen=%u usedLen=%u volume=%.4f\n",
+        index, clippedLength, sampleCount, volume);
+
+    // Destroy existing convolution filter before re-initializing
+    if (m_filters[index].convolution.getSampleCount() > 0) {
+        m_filters[index].convolution.destroy();
+    }
+
     m_filters[index].convolution.initialize(sampleCount);
     for (unsigned int i = 0; i < sampleCount; ++i) {
         m_filters[index].convolution.getImpulseResponse()[i] =
@@ -159,10 +175,10 @@ int Synthesizer::readAudioOutput(int samples, int16_t *buffer) {
 }
 
 void Synthesizer::waitProcessed() {
-    {
-        std::unique_lock<std::mutex> lk(m_lock0);
-        m_cv0.wait(lk, [this] { return m_processed; });
-    }
+    // Wait briefly for the render thread to process any pending input.
+    // Use timed wait to avoid deadlock if render thread is busy.
+    std::unique_lock<std::mutex> lk(m_lock0);
+    m_cv0.wait_for(lk, std::chrono::milliseconds(50), [this] { return m_processed; });
 }
 
 void Synthesizer::writeInput(const double *data) {
@@ -195,7 +211,7 @@ void Synthesizer::writeInput(const double *data) {
 }
 
 void Synthesizer::endInputBlock() {
-    std::unique_lock<std::mutex> lk(m_inputLock); 
+    std::unique_lock<std::mutex> lk(m_lock0); 
 
     for (int i = 0; i < m_inputChannelCount; ++i) {
         m_inputChannels[i].data.removeBeginning(m_inputSamplesRead);
@@ -206,7 +222,6 @@ void Synthesizer::endInputBlock() {
     }
     
     m_inputSamplesRead = 0;
-    m_processed = false;
 
     lk.unlock();
     m_cv0.notify_one();
@@ -222,16 +237,37 @@ void Synthesizer::audioRenderingThread() {
 void Synthesizer::renderAudio() {
     std::unique_lock<std::mutex> lk0(m_lock0);
 
-    m_cv0.wait(lk0, [this] {
+    // Target buffer: keep ~0.5s worth buffered at 44.1kHz = ~22050 samples.
+    // This provides enough cushion for frame timing variations.
+    const int targetBuffer = std::max(8192, static_cast<int>(m_audioSampleRate * 0.5f));
+
+    // Use timed wait so we can continuously process when input is available.
+    // Short timeout (2ms) to process frequently and keep the buffer full.
+    const auto timeout = std::chrono::milliseconds(2);
+    m_cv0.wait_for(lk0, timeout, [this, targetBuffer] {
         const bool inputAvailable =
             m_inputChannels[0].data.size() > 0
-            && m_audioBuffer.size() < 2000;
-        return !m_run || (inputAvailable && !m_processed);
+            && m_audioBuffer.size() < targetBuffer;
+        return !m_run || inputAvailable;
     });
 
+    // Check for shutdown
+    if (!m_run) {
+        m_processed = true;
+        lk0.unlock();
+        m_cv0.notify_one();
+        return;
+    }
+
     const int n = std::min(
-        std::max(0, 2000 - (int)m_audioBuffer.size()),
+        std::max(0, targetBuffer - (int)m_audioBuffer.size()),
         (int)m_inputChannels[0].data.size());
+
+    // Nothing to process
+    if (n <= 0) {
+        lk0.unlock();
+        return;
+    }
 
     for (int i = 0; i < m_inputChannelCount; ++i) {
         m_inputChannels[i].data.read(n, m_inputChannels[i].transferBuffer);
@@ -248,8 +284,19 @@ void Synthesizer::renderAudio() {
         m_filters[i].jitterFilter.setJitterScale(m_audioParameters.inputSampleNoise);
     }
 
+    // Render to temp buffer first to avoid holding lock during expensive DSP
+    std::vector<int16_t> temp;
+    temp.reserve(n);
     for (int i = 0; i < n; ++i) {
-        m_audioBuffer.write(renderAudio(i));
+        temp.push_back(renderAudio(i));
+    }
+
+    // Lock and write to output buffer atomically
+    {
+        std::lock_guard<std::mutex> lock(m_lock0);
+        for (int16_t sample : temp) {
+            m_audioBuffer.write(sample);
+        }
     }
 
     m_cv0.notify_one();
@@ -318,6 +365,8 @@ int16_t Synthesizer::renderAudio(int inputSample) {
     signal = m_antialiasing.fast_f(signal);
 
     m_levelingFilter.p_target = m_audioParameters.levelerTarget;
+    m_levelingFilter.p_maxLevel = m_audioParameters.levelerMaxGain;
+    m_levelingFilter.p_minLevel = m_audioParameters.levelerMinGain;
     const float v_leveled = m_levelingFilter.f(signal) * m_audioParameters.volume;
     int r_int = std::lround(v_leveled);
     if (r_int > INT16_MAX) {

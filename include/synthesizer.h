@@ -26,7 +26,7 @@ class Synthesizer {
             float airNoise = 1.0f;
             float airNoiseFrequencyCutoff = 2000.0f;
             float levelerTarget = 30000.0f;
-            float levelerMaxGain = 1.9f;
+            float levelerMaxGain = 100.0f;  // Allow much higher gain for quiet engines
             float levelerMinGain = 0.00001f;
         };
 

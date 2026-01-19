@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.5)
 
 option(DTV "Enable video output" OFF)
 option(PIRANHA_ENABLED "Enable scripting input" ON)
@@ -23,6 +23,35 @@ set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "cmake")
 project(engine-sim)
 
 set(CMAKE_CXX_STANDARD 17)
+
+# ========================================================
+# macOS toolchain helpers
+#
+# macOS ships an old bison (2.3) that is too old for piranha's grammar.
+# Prefer Homebrew flex/bison when available.
+if (APPLE)
+    find_program(HOMEBREW_BISON bison
+        PATHS
+            /opt/homebrew/opt/bison/bin
+            /usr/local/opt/bison/bin
+            /opt/homebrew/bin
+            /usr/local/bin
+        NO_DEFAULT_PATH)
+    if (HOMEBREW_BISON)
+        set(BISON_EXECUTABLE ${HOMEBREW_BISON} CACHE FILEPATH "Bison executable" FORCE)
+    endif()
+
+    find_program(HOMEBREW_FLEX flex
+        PATHS
+            /opt/homebrew/opt/flex/bin
+            /usr/local/opt/flex/bin
+            /opt/homebrew/bin
+            /usr/local/bin
+        NO_DEFAULT_PATH)
+    if (HOMEBREW_FLEX)
+        set(FLEX_EXECUTABLE ${HOMEBREW_FLEX} CACHE FILEPATH "Flex executable" FORCE)
+    endif()
+endif()
 
 # ========================================================
 # GTEST
@@ -134,13 +163,29 @@ add_library(engine-sim STATIC
     include/vtec_valvetrain.h
 )
 
+set_target_properties(engine-sim PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_link_libraries(engine-sim
     simple-2d-constraint-solver
-    csv-io
-    delta-basic)
+    csv-io)
 
 target_include_directories(engine-sim
     PUBLIC dependencies/submodules)
+
+add_library(engine-sim-runtime STATIC
+    src/engine_sim_runtime_c.cpp
+    include/engine_sim_runtime_c.h
+)
+
+set_target_properties(engine-sim-runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(engine-sim-runtime
+    engine-sim)
+
+target_include_directories(engine-sim-runtime
+    PUBLIC
+        include
+        dependencies/submodules)
 
 if (PIRANHA_ENABLED)
     add_library(engine-sim-script-interpreter STATIC
@@ -189,6 +234,9 @@ if (PIRANHA_ENABLED)
     target_link_libraries(engine-sim-script-interpreter
         csv-io
         piranha)
+
+    target_link_libraries(engine-sim-runtime
+        engine-sim-script-interpreter)
 endif (PIRANHA_ENABLED)
 
 if (DISCORD_ENABLED)
@@ -276,6 +324,7 @@ add_executable(engine-sim-app WIN32
 
 target_link_libraries(engine-sim-app
     engine-sim
+    delta-basic
 )
 
 if (DTV)

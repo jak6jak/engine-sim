@@ -16,6 +16,8 @@ class LevelingFilter : public Filter {
     protected:
         float m_peak;
         float m_attenuation;
+        int m_debugCounter;
+        float m_lastReportedAtten;
 
     public:
         float p_maxLevel;

@@ -1,6 +1,7 @@
 #include "../include/leveling_filter.h"
 
 #include <cmath>
+#include <cstdio>
 
 LevelingFilter::LevelingFilter() {
     m_peak = 30000.0;
@@ -8,6 +9,8 @@ LevelingFilter::LevelingFilter() {
     p_target = 30000.0;
     p_minLevel = 0.0;
     p_maxLevel = 1.0;
+    m_debugCounter = 0;
+    m_lastReportedAtten = 1.0;
 }
 
 LevelingFilter::~LevelingFilter() {
@@ -15,7 +18,9 @@ LevelingFilter::~LevelingFilter() {
 }
 
 float LevelingFilter::f(float sample) {
-    m_peak = 0.999f * m_peak;
+    // Slower decay to prevent audio from fading out during timing gaps.
+    // 0.99999 at 44.1kHz means ~2 seconds to decay to ~37% (vs ~22ms with 0.999)
+    m_peak = 0.99999f * m_peak;
     if (std::abs(sample) > m_peak) {
         m_peak = std::abs(sample);
     }
@@ -28,7 +33,10 @@ float LevelingFilter::f(float sample) {
     if (attenuation < p_minLevel) attenuation = p_minLevel;
     else if (attenuation > p_maxLevel) attenuation = p_maxLevel;
 
-    m_attenuation = 0.9 * m_attenuation + 0.1 * attenuation;
+    // Much slower smoothing to avoid audible gain pumping/clicking
+    // 0.999/0.001 at 44.1kHz means ~700 samples (~16ms) to reach 50% of target
+    // This prevents the sudden 1-2% jumps that cause blips
+    m_attenuation = 0.999f * m_attenuation + 0.001f * attenuation;
 
     return sample * m_attenuation;
 }

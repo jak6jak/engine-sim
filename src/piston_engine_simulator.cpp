@@ -33,7 +33,6 @@ PistonEngineSimulator::~PistonEngineSimulator() {
     assert(m_crankshaftFrictionConstraints == nullptr);
     assert(m_exhaustFlowStagingBuffer == nullptr);
     assert(m_delayFilters == nullptr);
-    assert(m_antialiasingFilters == nullptr);
 }
 
 void PistonEngineSimulator::loadSimulation(Engine *engine, Vehicle *vehicle, Transmission *transmission) {
@@ -223,7 +222,7 @@ void PistonEngineSimulator::placeAndInitialize() {
             + exhaust->getLength();
         const double speedOfSound = 343.0 * units::m / units::sec;
         const double delay = exhaustLength / speedOfSound;
-        m_delayFilters[i].initialize(delay, 10000.0);
+        m_delayFilters[i].initialize(delay, static_cast<double>(getSimulationFrequency()));
     }
 
     m_engine->getIgnitionModule()->reset();
@@ -351,7 +350,6 @@ void PistonEngineSimulator::destroy() {
     if (m_linkConstraints != nullptr) delete[] m_linkConstraints;
     if (m_crankshaftFrictionConstraints != nullptr) delete[] m_crankshaftFrictionConstraints;
     if (m_exhaustFlowStagingBuffer != nullptr) delete[] m_exhaustFlowStagingBuffer;
-    if (m_system != nullptr) delete m_system;
     if (m_delayFilters != nullptr) delete[] m_delayFilters;
 
     m_crankConstraints = nullptr;
@@ -359,12 +357,13 @@ void PistonEngineSimulator::destroy() {
     m_linkConstraints = nullptr;
     m_crankshaftFrictionConstraints = nullptr;
     m_exhaustFlowStagingBuffer = nullptr;
-    m_system = nullptr;
 
     m_vehicle = nullptr;
     m_transmission = nullptr;
     m_engine = nullptr;
     m_delayFilters = nullptr;
+
+    Simulator::destroy();
 }
 
 void PistonEngineSimulator::writeToSynthesizer() {
