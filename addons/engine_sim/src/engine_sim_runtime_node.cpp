@@ -10,6 +10,9 @@
 
 #include <vector>
 
+// Build version for debugging stale builds
+#define ENGINE_SIM_BUILD_VERSION "2026-01-19-v3-10kHz-2fluid"
+
 // HACK: Bypass es_runtime_c to access internal simulator directly
 // and force audio sample rate to match Godot's mix rate.
 #include <simulator.h>
@@ -25,16 +28,9 @@ namespace godot {
 
 EngineSimRuntime::EngineSimRuntime() {
     m_rt = es_runtime_create();
-    
-    // START THE THREAD:
-    // The synth thread is required because Synthesizer::renderAudio() waits on a condition variable
-    // controlled by endInputBlock(). If no thread is running, the synth never processes data!
-    if (m_rt) {
-        es_runtime_mirror_t *mirror = reinterpret_cast<es_runtime_mirror_t *>(m_rt);
-        if (mirror->simulator) {
-            mirror->simulator->startAudioRenderingThread();
-        }
-    }
+    UtilityFunctions::print(String("engine-sim: build ") + String(ENGINE_SIM_BUILD_VERSION));
+    // Don't start the audio thread here - wait until after script is loaded
+    // and synthesizer is initialized in load_mr_script()
 }
 
 EngineSimRuntime::~EngineSimRuntime() {
@@ -59,6 +55,13 @@ void EngineSimRuntime::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_starter_enabled", "enabled"), &EngineSimRuntime::set_starter_enabled);
     ClassDB::bind_method(D_METHOD("set_ignition_enabled", "enabled"), &EngineSimRuntime::set_ignition_enabled);
 
+    // Transmission/clutch control
+    ClassDB::bind_method(D_METHOD("set_gear", "gear"), &EngineSimRuntime::set_gear);
+    ClassDB::bind_method(D_METHOD("get_gear"), &EngineSimRuntime::get_gear);
+    ClassDB::bind_method(D_METHOD("get_gear_count"), &EngineSimRuntime::get_gear_count);
+    ClassDB::bind_method(D_METHOD("set_clutch_pressure", "pressure_0_to_1"), &EngineSimRuntime::set_clutch_pressure);
+    ClassDB::bind_method(D_METHOD("get_clutch_pressure"), &EngineSimRuntime::get_clutch_pressure);
+
     ClassDB::bind_method(D_METHOD("start_audio", "mix_rate", "buffer_length"), &EngineSimRuntime::start_audio);
     ClassDB::bind_method(D_METHOD("stop_audio"), &EngineSimRuntime::stop_audio);
     ClassDB::bind_method(D_METHOD("is_audio_running"), &EngineSimRuntime::is_audio_running);
@@ -75,6 +78,9 @@ void EngineSimRuntime::_bind_methods() {
 
     ClassDB::bind_method(D_METHOD("set_max_sim_steps_per_frame", "steps"), &EngineSimRuntime::set_max_sim_steps_per_frame);
     ClassDB::bind_method(D_METHOD("get_max_sim_steps_per_frame"), &EngineSimRuntime::get_max_sim_steps_per_frame);
+
+    ClassDB::bind_method(D_METHOD("set_simulation_speed", "speed"), &EngineSimRuntime::set_simulation_speed);
+    ClassDB::bind_method(D_METHOD("get_simulation_speed"), &EngineSimRuntime::get_simulation_speed);
 }
 
 void EngineSimRuntime::set_max_sim_steps_per_frame(int steps) {
@@ -83,6 +89,20 @@ void EngineSimRuntime::set_max_sim_steps_per_frame(int steps) {
 
 int EngineSimRuntime::get_max_sim_steps_per_frame() const {
     return m_sim_steps_per_process;
+}
+
+void EngineSimRuntime::set_simulation_speed(double speed) {
+    if (m_rt == nullptr) {
+        return;
+    }
+    es_runtime_set_simulation_speed(m_rt, speed);
+}
+
+double EngineSimRuntime::get_simulation_speed() const {
+    if (m_rt == nullptr) {
+        return 1.0;
+    }
+    return es_runtime_get_simulation_speed(m_rt);
 }
 
 void EngineSimRuntime::set_audio_debug_enabled(bool enabled) {
@@ -116,7 +136,11 @@ bool EngineSimRuntime::load_mr_script(const String &path) {
 
     if (!m_loaded) {
         UtilityFunctions::printerr(String("engine-sim: failed to load script: ") + abs_path);
+        return false;
     }
+
+    // Audio rendering thread is already started by es_runtime_load_script()
+    // No need to start it again here
 
     return m_loaded;
 }
@@ -159,6 +183,41 @@ void EngineSimRuntime::set_ignition_enabled(bool enabled) {
     }
 
     es_runtime_set_ignition_enabled(m_rt, enabled);
+}
+
+void EngineSimRuntime::set_gear(int gear) {
+    if (m_rt == nullptr) {
+        return;
+    }
+    es_runtime_set_gear(m_rt, gear);
+}
+
+int EngineSimRuntime::get_gear() const {
+    if (m_rt == nullptr) {
+        return 0;
+    }
+    return es_runtime_get_gear(m_rt);
+}
+
+int EngineSimRuntime::get_gear_count() const {
+    if (m_rt == nullptr) {
+        return 0;
+    }
+    return es_runtime_get_gear_count(m_rt);
+}
+
+void EngineSimRuntime::set_clutch_pressure(double pressure_0_to_1) {
+    if (m_rt == nullptr) {
+        return;
+    }
+    es_runtime_set_clutch_pressure(m_rt, pressure_0_to_1);
+}
+
+double EngineSimRuntime::get_clutch_pressure() const {
+    if (m_rt == nullptr) {
+        return 0.0;
+    }
+    return es_runtime_get_clutch_pressure(m_rt);
 }
 
 void EngineSimRuntime::start_audio(double mix_rate, double buffer_length) {
@@ -291,18 +350,23 @@ void EngineSimRuntime::_physics_process(double delta) {
         ++steps;
     }
 
-    if (m_audio_debug_enabled && (m_audio_debug_frames_pushed % 10000 < 512)) {
-       // Occasional log of sim load
-       //UtilityFunctions::print(String("engine-sim[sim]: delta=") + String::num(delta) + String(" steps=") + String::num_int64(steps) + String(" complete=") + String(frame_complete ? "yes" : "no"));
+    static int s_frameCount = 0;
+    static int s_totalSteps = 0;
+    s_totalSteps += steps;
+    if (++s_frameCount % 60 == 0) {
+        UtilityFunctions::print(String("engine-sim[sim]: steps_this_frame=") + String::num_int64(steps) 
+            + String(" total_steps=") + String::num_int64(s_totalSteps)
+            + String(" avg=") + String::num(s_totalSteps / 60.0)
+            + String(" frame_complete=") + String(frame_complete ? "yes" : "no"));
+        s_totalSteps = 0;
     }
 
     if (frame_complete) {
         es_runtime_end_frame(m_rt);
         m_sim_frame_active = false;
         
-        // Wait for the synthesizer to finish processing this frame's audio
-        // before allowing any reads. This ensures the batch is ready.
-        es_runtime_wait_audio_processed(m_rt);
+        // Don't wait for audio processing - let it run asynchronously
+        // The audio buffer is large enough to handle timing variations
     }
 
     if (m_audio_debug_enabled) {
@@ -315,41 +379,57 @@ void EngineSimRuntime::pump_audio() {
         return;
     }
 
-    // Push as much as we can to Godot's buffer.
-    // Keep looping until we can't get more data or Godot's buffer is full.
-    int total_pushed = 0;
-    int iterations = 0;
-    const int max_iterations = 32;
+    // Check current fill level - only pump if buffer drops below 50%
+    const int capacity = m_audio_buffer_capacity_frames;
+    const int frames_free = m_audio_playback->get_frames_available();
+    const int frames_filled = capacity - frames_free;
+    const float fill_ratio = (capacity > 0) ? (float)frames_filled / (float)capacity : 1.0f;
     
-    while (iterations++ < max_iterations) {
-        const int frames_free = m_audio_playback->get_frames_available();
-        if (frames_free <= 0) {
-            break;
+    // If buffer is above 50% full, let it drain a bit before pumping more
+    // This prevents us from constantly draining the synth buffer
+    if (fill_ratio > 0.5f) {
+        return;
+    }
+
+    // Loop to fill Godot's buffer as much as possible
+    int total_pushed = 0;
+    const int chunk_size = 1024;
+    const int max_iterations = 64;  // Cap iterations to avoid blocking too long
+    
+    for (int i = 0; i < max_iterations; ++i) {
+        const int frames_available = m_audio_playback->get_frames_available();
+        if (frames_available <= 0) {
+            break;  // Godot's buffer is full
         }
 
-        // Request up to chunk size
-        const int chunk = MIN(frames_free, m_audio_chunk_frames);
-        if (chunk <= 0) {
-            break;
-        }
+        const int to_request = MIN(frames_available, chunk_size);
 
-        PackedVector2Array stereo = read_audio_stereo(chunk);
-        const int produced = stereo.size();
+        // Read samples from the synthesizer
+        m_audio_pcm16_tmp.resize(static_cast<size_t>(to_request));
+        const int produced = es_runtime_read_audio(m_rt, to_request, m_audio_pcm16_tmp.data());
         
         if (produced <= 0) {
-            // No more audio available from synthesizer
-            break;
+            break;  // No more audio available from synthesizer
         }
 
+        // Convert and push
+        PackedVector2Array stereo;
+        stereo.resize(produced);
+        Vector2 *w = stereo.ptrw();
+        for (int j = 0; j < produced; ++j) {
+            float s = static_cast<float>(m_audio_pcm16_tmp[static_cast<size_t>(j)]) / 32768.0f;
+            w[j] = Vector2(s, s);
+        }
         m_audio_playback->push_buffer(stereo);
         total_pushed += produced;
-        
-        // If we got less than requested, synth buffer is drained
-        if (produced < chunk) {
+
+        // If synth gave us less than requested, it's drained - stop
+        if (produced < to_request) {
             break;
         }
     }
 
+    // Debug logging
     if (m_audio_debug_enabled && total_pushed > 0) {
         m_audio_debug_frames_pushed += static_cast<uint64_t>(total_pushed);
         
@@ -359,12 +439,11 @@ void EngineSimRuntime::pump_audio() {
             const int capacity = m_audio_buffer_capacity_frames;
             const int frames_free_now = m_audio_playback->get_frames_available();
             const int frames_filled = (capacity > 0) ? (capacity - frames_free_now) : -1;
+            const float fill_ratio = (float)frames_filled / (float)capacity;
             
             UtilityFunctions::print(String("engine-sim[audio]: filled=") + String::num_int64(frames_filled)
-                + String(" cap=") + String::num_int64(capacity)
-                + String(" pushed=") + String::num_int64(total_pushed)
-                + String(" total=") + String::num_int64(static_cast<int64_t>(m_audio_debug_frames_pushed))
-                + String(" shortfalls=") + String::num_int64(static_cast<int64_t>(m_audio_debug_underrun_events)));
+                + String(" (") + String::num(fill_ratio * 100.0, 1) + String("%)")
+                + String(" pushed=") + String::num_int64(total_pushed));
         }
     }
 }
@@ -382,6 +461,13 @@ PackedVector2Array EngineSimRuntime::read_audio_stereo(int frames) {
         m_audio_debug_frames_produced += static_cast<uint64_t>(MAX(produced, 0));
         if (produced < frames) {
             m_audio_debug_underrun_events += 1;
+            // Log every shortfall to understand the pattern
+            static int s_shortfallLogCount = 0;
+            if (++s_shortfallLogCount <= 20) {
+                UtilityFunctions::print(String("engine-sim[SHORTFALL]: requested=") + String::num_int64(frames)
+                    + String(" got=") + String::num_int64(produced)
+                    + String(" count=") + String::num_int64(m_audio_debug_underrun_events));
+            }
         }
         
         // Detect discontinuities at chunk boundaries

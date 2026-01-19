@@ -281,9 +281,11 @@ bool es_runtime_load_script(es_runtime_t *rt, const char *script_path) {
     // Create simulator (full engine simulation) + synthesizer
     auto *sim = new PistonEngineSimulator;
     sim->initialize(sim_params);
-    sim->setSimulationFrequency(engine->getSimulationFrequency());
+    // Use 10kHz instead of engine's default for performance
+    // Original engines may request 20kHz+ but that's too slow for real-time
+    sim->setSimulationFrequency(10000);
     sim->loadSimulation(engine, vehicle, transmission);
-    sim->setFluidSimulationSteps(8);
+    sim->setFluidSimulationSteps(2);  // Reduced from 8 for performance
 
     engine->calculateDisplacement();
 
@@ -420,6 +422,51 @@ void es_runtime_wait_audio_processed(es_runtime_t *rt) {
 double es_runtime_get_engine_speed(es_runtime_t *rt) {
     if (rt == nullptr || rt->simulator == nullptr) return 0.0;
     return rt->simulator->filteredEngineSpeed();
+}
+
+void es_runtime_set_simulation_speed(es_runtime_t *rt, double speed) {
+    if (rt == nullptr || rt->simulator == nullptr) return;
+    rt->simulator->setSimulationSpeed(speed);
+}
+
+double es_runtime_get_simulation_speed(es_runtime_t *rt) {
+    if (rt == nullptr || rt->simulator == nullptr) return 1.0;
+    return rt->simulator->getSimulationSpeed();
+}
+
+void es_runtime_set_simulation_frequency(es_runtime_t *rt, double freq) {
+    if (rt == nullptr || rt->simulator == nullptr) return;
+    rt->simulator->setSimulationFrequency(freq);
+}
+
+double es_runtime_get_simulation_frequency(es_runtime_t *rt) {
+    if (rt == nullptr || rt->simulator == nullptr) return 10000.0;
+    return rt->simulator->getSimulationFrequency();
+}
+
+void es_runtime_set_gear(es_runtime_t *rt, int gear) {
+    if (rt == nullptr || rt->transmission == nullptr) return;
+    rt->transmission->changeGear(gear);
+}
+
+int es_runtime_get_gear(es_runtime_t *rt) {
+    if (rt == nullptr || rt->transmission == nullptr) return 0;
+    return rt->transmission->getGear();
+}
+
+int es_runtime_get_gear_count(es_runtime_t *rt) {
+    if (rt == nullptr || rt->transmission == nullptr) return 0;
+    return rt->transmission->getGearCount();
+}
+
+void es_runtime_set_clutch_pressure(es_runtime_t *rt, double pressure_0_to_1) {
+    if (rt == nullptr || rt->transmission == nullptr) return;
+    rt->transmission->setClutchPressure(clamp01(pressure_0_to_1));
+}
+
+double es_runtime_get_clutch_pressure(es_runtime_t *rt) {
+    if (rt == nullptr || rt->transmission == nullptr) return 0.0;
+    return rt->transmission->getClutchPressure();
 }
 
 } // extern "C"

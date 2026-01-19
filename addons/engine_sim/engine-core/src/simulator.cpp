@@ -89,6 +89,10 @@ void Simulator::startFrame(double dt) {
     }
 }
 
+// Timing for performance monitoring (simplified)
+static long long s_totalStepTimeNs = 0;
+static int s_profileSteps = 0;
+
 bool Simulator::simulateStep() {
     if (getCurrentIteration() >= simulationSteps()) {
         auto s1 = std::chrono::steady_clock::now();
@@ -97,8 +101,19 @@ bool Simulator::simulateStep() {
             std::chrono::duration_cast<std::chrono::microseconds>(s1 - m_simulationStart).count();
         m_physicsProcessingTime = m_physicsProcessingTime * 0.98 + 0.02 * lastFrame;
 
+        // Print simple timing every 20000 steps
+        if (s_profileSteps >= 20000) {
+            double usPerStep = (s_totalStepTimeNs / 1000.0) / s_profileSteps;
+            double maxStepsPerSec = 1000000.0 / usPerStep;
+            std::fprintf(stderr, "engine-sim[perf]: %.1fus/step (max %.0f steps/sec)\n", usPerStep, maxStepsPerSec);
+            s_totalStepTimeNs = 0;
+            s_profileSteps = 0;
+        }
+
         return false;
     }
+
+    auto t0 = std::chrono::steady_clock::now();
 
     const double timestep = getTimestep();
     m_system->process(timestep, 1);
@@ -114,8 +129,6 @@ bool Simulator::simulateStep() {
 
     for (int i = 0; i < m_engine->getCrankshaftCount(); ++i) {
         Crankshaft *shaft = m_engine->getCrankshaft(i);
-
-        // Correct drift (temporary hack)
         shaft->m_body.theta = outputShaft->m_body.theta;
     }
 
@@ -142,8 +155,11 @@ bool Simulator::simulateStep() {
     }
 
     simulateStep_();
-
     writeToSynthesizer();
+
+    auto t1 = std::chrono::steady_clock::now();
+    s_totalStepTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    ++s_profileSteps;
 
     ++m_currentIteration;
     return true;

@@ -5,7 +5,6 @@
 
 #include <cmath>
 #include <assert.h>
-#include <chrono>
 #include <set>
 
 PistonEngineSimulator::PistonEngineSimulator() {
@@ -289,7 +288,6 @@ void PistonEngineSimulator::simulateStep_() {
         if (im->getIgnitionEvent(i)) {
             m_engine->getChamber(i)->ignite();
         }
-
         m_engine->getChamber(i)->update(timestep);
     }
 
@@ -301,6 +299,7 @@ void PistonEngineSimulator::simulateStep_() {
     const int exhaustSystemCount = m_engine->getExhaustSystemCount();
     const int intakeCount = m_engine->getIntakeCount();
     const double fluidTimestep = timestep / m_fluidSimulationSteps;
+    
     for (int i = 0; i < m_fluidSimulationSteps; ++i) {
         for (int j = 0; j < exhaustSystemCount; ++j) {
             m_engine->getExhaustSystem(j)->process(fluidTimestep);

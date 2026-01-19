@@ -391,7 +391,7 @@ Simulator *Engine::createSimulator(Vehicle *vehicle, Transmission *transmission)
     simulator->setSimulationFrequency(getSimulationFrequency());
 
     simulator->loadSimulation(this, vehicle, transmission);
-    simulator->setFluidSimulationSteps(8);
+    simulator->setFluidSimulationSteps(2);  // Reduced from 8 for performance
 
     return static_cast<Simulator *>(simulator);
 }

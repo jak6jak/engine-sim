@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <chrono>
 
 #undef min
 #undef max
@@ -20,19 +21,15 @@ Synthesizer::Synthesizer() {
 
     m_lastInputSampleOffset = 0.0;
 
-    m_run.store(false, std::memory_order_relaxed);
+    m_run = true;
     m_thread = nullptr;
     m_filters = nullptr;
-    m_renderBuffer = nullptr;
-    m_renderBufferCapacity = 0;
-    m_rngState = 0x12345678;  // Non-zero seed
 }
 
 Synthesizer::~Synthesizer() {
     assert(m_inputChannels == nullptr);
     assert(m_thread == nullptr);
     assert(m_filters == nullptr);
-    assert(m_renderBuffer == nullptr);
 }
 
 void Synthesizer::initialize(const Parameters &p) {
@@ -54,22 +51,10 @@ void Synthesizer::initialize(const Parameters &p) {
     for (int i = 0; i < p.inputChannelCount; ++i) {
         m_inputChannels[i].transferBuffer = new float[p.inputBufferSize];
         m_inputChannels[i].data.initialize(p.inputBufferSize);
-        m_inputChannels[i].lastInputSample = 0.0;
-        m_inputChannels[i].fractionalAccumulator = 0.0;
-        std::fprintf(stderr, "engine-sim: InputChannel[%d] initialized: fractionalAccumulator=%.3f\n",
-            i, m_inputChannels[i].fractionalAccumulator);
     }
-     std::fprintf(stderr, "engine-sim: Synthesizer initialized with %d input channels, input buffer size=%d, audio buffer size=%d\n",
-        p.inputChannelCount, p.inputBufferSize, p.audioBufferSize);
-    std::fprintf(stderr, "engine-sim: Sample rates: input=%.1f audio=%.1f ratio=%.3f targetFill=%d\n",
-        p.inputSampleRate, p.audioSampleRate, p.audioSampleRate / p.inputSampleRate, (p.audioBufferSize * 3) / 4);
+
     m_filters = new ProcessingFilters[p.inputChannelCount];
     for (int i = 0; i < p.inputChannelCount; ++i) {
-        // Ensure convolution filter is always initialized so renderAudio() is safe
-        // even when no impulse response WAV was loaded (pass-through).
-        m_filters[i].convolution.initialize(1);
-        m_filters[i].convolution.getImpulseResponse()[0] = 1.0f;
-
         m_filters[i].airNoiseLowPass.setCutoffFrequency(
             m_audioParameters.airNoiseFrequencyCutoff, m_audioSampleRate);
 
@@ -91,17 +76,7 @@ void Synthesizer::initialize(const Parameters &p) {
     m_levelingFilter.p_minLevel = m_audioParameters.levelerMinGain;
     m_antialiasing.setCutoffFrequency(m_audioSampleRate * 0.45f, m_audioSampleRate);
 
-    for (int i = 0; i < m_audioBufferSize; ++i) {
-        m_audioBuffer.write(0);
-    }
-
-    // Pre-allocate render buffer (max chunk size is 8192 in single-threaded mode)
-    m_renderBufferCapacity = 8192;
-    m_renderBuffer = new int16_t[m_renderBufferCapacity];
-    std::fprintf(stderr, "engine-sim: Pre-allocated render buffer with capacity %zu\n", m_renderBufferCapacity);
-
-    // Initialize fast PRNG with time-based seed
-    m_rngState = static_cast<uint32_t>(std::time(nullptr)) ^ 0xDEADBEEF;
+    // Don't pre-fill the audio buffer - let renderAudio() fill it as data arrives
 }
 
 void Synthesizer::initializeImpulseResponse(
@@ -117,17 +92,7 @@ void Synthesizer::initializeImpulseResponse(
         }
     }
 
-    // Limit IR length for real-time performance. 4000 samples at 44.1kHz = ~90ms reverb.
-    const unsigned int sampleCount = std::min(4000U, clippedLength);
-    
-    std::fprintf(stderr, "engine-sim: IR index=%d clippedLen=%u usedLen=%u volume=%.4f\n",
-        index, clippedLength, sampleCount, volume);
-
-    // Destroy existing convolution filter before re-initializing
-    if (m_filters[index].convolution.getSampleCount() > 0) {
-        m_filters[index].convolution.destroy();
-    }
-
+    const unsigned int sampleCount = std::min(10000U, clippedLength);
     m_filters[index].convolution.initialize(sampleCount);
     for (unsigned int i = 0; i < sampleCount; ++i) {
         m_filters[index].convolution.getImpulseResponse()[i] =
@@ -136,14 +101,23 @@ void Synthesizer::initializeImpulseResponse(
 }
 
 void Synthesizer::startAudioRenderingThread() {
-    m_singleThreaded = true;
-    m_run.store(true, std::memory_order_release);
+    m_run = true;
+    m_thread = new std::thread(&Synthesizer::audioRenderingThread, this);
+    std::fprintf(stderr, "engine-sim: Audio rendering thread STARTED\n");
 }
 
 void Synthesizer::endAudioRenderingThread() {
-    m_run.store(false, std::memory_order_release);
-    // Wake up any waiting threads so they can exit
-    m_cv0.notify_all();
+    std::fprintf(stderr, "engine-sim: Stopping audio rendering thread...\n");
+    if (m_thread != nullptr) {
+        m_run = false;
+        endInputBlock();
+
+        m_thread->join();
+        delete m_thread;
+
+        m_thread = nullptr;
+    }
+    std::fprintf(stderr, "engine-sim: Audio rendering thread STOPPED\n");
 }
 
 void Synthesizer::destroy() {
@@ -156,148 +130,66 @@ void Synthesizer::destroy() {
 
     delete[] m_inputChannels;
     delete[] m_filters;
-    delete[] m_renderBuffer;
 
     m_inputChannels = nullptr;
     m_filters = nullptr;
-    m_renderBuffer = nullptr;
-    m_renderBufferCapacity = 0;
 
     m_inputChannelCount = 0;
 }
 
 int Synthesizer::readAudioOutput(int samples, int16_t *buffer) {
-    if (m_singleThreaded && samples > 0) {
-        // Always generate audio at output sample rate, not waiting for large input buffers
-        // Target just enough for the current request to avoid gaps
-        const int targetBuffered = samples + 1024;  // Request size + small safety margin
+    std::lock_guard<std::mutex> lock(m_lock0);
 
-        int inputBefore, audioBefore;
-        {
-            std::lock_guard<std::mutex> lk(m_lock0);
-            inputBefore = (int)m_inputChannels[0].data.size();
-            audioBefore = (int)m_audioBuffer.size();
-        }
-
-        // Process aggressively to ensure we hit the target each call
-        // This maintains steady output even with slow input
-        int processed = 0;
-        int noInputCount = 0;
-        for (int iterations = 0; iterations < 100000; ++iterations) {
-            int inputAvailable, audioSize;
-            {
-                std::lock_guard<std::mutex> lk(m_lock0);
-                inputAvailable = (int)m_inputChannels[0].data.size();
-                audioSize = (int)m_audioBuffer.size();
-            }
-
-            if (audioSize >= targetBuffered) {
-                break;
-            }
-            
-            // If input is empty, allow a few renders using held samples, then give up
-            if (inputAvailable == 0) {
-                noInputCount++;
-                if (noInputCount > 5) {  // Allow up to 5 renders with held samples
-                    break;
-                }
-            } else {
-                noInputCount = 0;  // Reset counter when input arrives
-            }
-
-            renderAudio();
-            processed++;
-        }
-
-        static int logCounter = 0;
-        if (++logCounter % 100 == 0 || audioBefore < samples) {
-            int inputAfter, audioAfter;
-            {
-                std::lock_guard<std::mutex> lk(m_lock0);
-                inputAfter = (int)m_inputChannels[0].data.size();
-                audioAfter = (int)m_audioBuffer.size();
-            }
-            std::fprintf(stderr, "engine-sim[readAudio]: #%d req=%d inB=%d inA=%d audB=%d audA=%d proc=%d target=%d\n",
-                logCounter, samples, inputBefore, inputAfter, audioBefore, audioAfter, processed, targetBuffered);
-        }
+    const int bufferSize = m_audioBuffer.size();
+    const int samplesToRead = std::min(samples, bufferSize);
+    
+    static int s_readCount = 0;
+    static int s_zeroFills = 0;
+    
+    if (samplesToRead > 0) {
+        m_audioBuffer.readAndRemove(samplesToRead, buffer);
+    }
+    
+    // Zero-fill any remaining requested samples
+    if (samplesToRead < samples) {
+        memset(buffer + samplesToRead, 0, sizeof(int16_t) * (samples - samplesToRead));
+        s_zeroFills++;
+    }
+    
+    if (++s_readCount % 500 == 0) {
+        std::fprintf(stderr, "engine-sim[readAudio #%d]: requested=%d got=%d bufferSize=%d zeroFills=%d\n",
+            s_readCount, samples, samplesToRead, bufferSize, s_zeroFills);
     }
 
-    int newDataLength;
-    {
-        std::lock_guard<std::mutex> lk(m_lock0);
-        newDataLength = m_audioBuffer.size();
-        if (newDataLength >= samples) {
-            m_audioBuffer.readAndRemove(samples, buffer);
-        }
-        else {
-            m_audioBuffer.readAndRemove(newDataLength, buffer);
-        }
-    }
-
-
-    const int samplesConsumed = std::min(samples, newDataLength);
-
-    return samplesConsumed;
+    return samplesToRead;
 }
 
 void Synthesizer::waitProcessed() {
-    if (m_singleThreaded) {
-        return;
-    }
-    // Wait briefly for the render thread to process any pending input.
-    // Use timed wait to avoid deadlock if render thread is busy.
-    std::unique_lock<std::mutex> lk(m_lock0);
-    m_cv0.wait_for(lk, std::chrono::milliseconds(50), [this] { 
-        return m_processed || !m_run.load(std::memory_order_acquire); 
-    });
+    // No-op in continuous mode - audio processing happens asynchronously
+    // The audio thread runs continuously and doesn't need synchronization
 }
 
 void Synthesizer::writeInput(const double *data) {
-    std::lock_guard<std::mutex> lk(m_lock0);
-
-    // Calculate how many samples to generate based on sample rate ratio
-    // This accumulates over time to avoid losing fractional samples
-    double samplesToAdd = (double)m_audioSampleRate / m_inputSampleRate;
-    
-    m_inputWriteOffset += samplesToAdd;
+    m_inputWriteOffset += (double)m_audioSampleRate / m_inputSampleRate;
     if (m_inputWriteOffset >= (double)m_inputBufferSize) {
         m_inputWriteOffset -= (double)m_inputBufferSize;
     }
 
-    const double distance = inputDistance(m_inputWriteOffset, m_lastInputSampleOffset);
-
     for (int i = 0; i < m_inputChannelCount; ++i) {
         RingBuffer<float> &buffer = m_inputChannels[i].data;
         const double lastInputSample = m_inputChannels[i].lastInputSample;
+        const size_t baseIndex = buffer.writeIndex();
+        const double distance =
+            inputDistance(m_inputWriteOffset, m_lastInputSampleOffset);
+        double s =
+            inputDistance(baseIndex, m_lastInputSampleOffset);
+        for (; s <= distance; s += 1.0) {
+            if (s >= m_inputBufferSize) s -= m_inputBufferSize;
 
-        // Accumulate fractional samples to preserve sample rate ratio over time
-        // If ratio is 2.205, this ensures we average 2.205 samples per input over time
-        const double oldAccum = m_inputChannels[i].fractionalAccumulator;
-        double samplesToGenerate = distance + oldAccum;
-        int wholeSamples = (int)std::floor(samplesToGenerate);
-        m_inputChannels[i].fractionalAccumulator = samplesToGenerate - wholeSamples;
+            const double f = s / distance;
+            const double sample = lastInputSample * (1 - f) + data[i] * f;
 
-        // Write the integer number of samples with linear interpolation
-        // Distribute wholeSamples evenly across the distance
-        if (wholeSamples > 0) {
-            for (int j = 0; j < wholeSamples; j++) {
-                // Interpolate evenly across wholeSamples, not distance
-                const double f = (j + 0.5) / wholeSamples;
-                const double sample = lastInputSample * (1 - f) + data[i] * f;
-
-                buffer.write(m_filters[i].antialiasing.fast_f(static_cast<float>(sample)));
-            }
-        }
-
-        static int writeLogCounter = 0;
-        static int samplesWrittenTotal = 0;
-        static int callsTotal = 0;
-        samplesWrittenTotal += wholeSamples;
-        callsTotal++;
-        if (++writeLogCounter % 503 == 0) {  // More frequent logging to catch issues
-            std::fprintf(stderr, "engine-sim[writeInput][ch%d]: distance=%.3f oldAcc=%.3f sampGen=%.3f wrote=%d newAcc=%.3f bufSize=%zu avgRatio=%.4f (%d calls, %d samples total)\n",
-                i, distance, oldAccum, samplesToGenerate, wholeSamples, m_inputChannels[i].fractionalAccumulator, buffer.size(),
-                (double)samplesWrittenTotal / callsTotal, callsTotal, samplesWrittenTotal);
+            buffer.write(m_filters[i].antialiasing.fast_f(static_cast<float>(sample)));
         }
 
         m_inputChannels[i].lastInputSample = data[i];
@@ -307,139 +199,99 @@ void Synthesizer::writeInput(const double *data) {
 }
 
 void Synthesizer::endInputBlock() {
-    {
-        std::lock_guard<std::mutex> lk(m_lock0);
-        if (m_inputChannelCount != 0) {
-            m_latency = m_inputChannels[0].data.size();
-        }
-        m_processed = false;
-    }
+    std::lock_guard<std::mutex> lk(m_lock0);
 
-    if (m_singleThreaded) {
-        // Don't process here - let readAudioOutput handle all processing
-        // Just mark as processed
-        {
-            std::lock_guard<std::mutex> lk(m_lock0);
-            m_processed = true;
-        }
+    // Just update latency - samples are removed directly by readAndRemove in renderAudio
+    if (m_inputChannelCount != 0) {
+        m_latency = m_inputChannels[0].data.size();
     }
-    else {
-        m_cv0.notify_one();
-    }
-}
-
-void Synthesizer::writeInputBatch(const double *data) {
-    // Same as writeInput but tracks calls and can trigger more frequent processing
-    writeInput(data);
     
-    // Every N calls, notify the render thread to process
-    // This ensures we don't wait for endInputBlock() to trigger audio generation
-    m_batchInputCallCount++;
-    if (m_batchInputCallCount >= BATCH_PROCESS_INTERVAL && !m_singleThreaded) {
-        m_batchInputCallCount = 0;
-        m_cv0.notify_one();  // Wake render thread to process accumulated input
+    static int s_callCount = 0;
+    if (++s_callCount % 100 == 0) {
+        std::fprintf(stderr, "engine-sim[endInputBlock #%d]: latency=%d\n",
+            s_callCount, m_latency);
     }
+
+    // Notify the render thread that new input may be available
+    // (it's already running but this helps if it was waiting)
 }
 
 void Synthesizer::audioRenderingThread() {
-    while (m_run.load(std::memory_order_acquire)) {
+    while (m_run) {
         renderAudio();
     }
 }
 
 #undef max
 void Synthesizer::renderAudio() {
-    // Process in reasonable chunks to avoid excessive iterations
-    // Larger chunks in single-threaded to reduce overhead
-    const int maxChunkSize = m_singleThreaded ? 8192 : 2000;
-    const int minChunkSize = m_singleThreaded ? 512 : 128;  // Minimum to maintain smooth output
+    std::unique_lock<std::mutex> lk0(m_lock0);
 
-    // Determine how many samples to process and read audio parameters atomically
-    int n;
-    AudioParameters params;
-    {
-        std::lock_guard<std::mutex> lk(m_lock0);
+    // Wait for enough input to accumulate - at least one physics frame worth (~800 samples)
+    // This prevents draining the buffer faster than simulation can fill it
+    const int minInputBatch = 500;
+    const int maxChunkSize = 4000;
+    
+    // Wait up to 20ms for input to accumulate
+    m_cv0.wait_for(lk0, std::chrono::milliseconds(20), [this, minInputBatch] {
+        const int inputAvail = (int)m_inputChannels[0].data.size();
+        const bool hasSpace = (int)m_audioBuffer.size() < m_audioBufferSize - 1000;
+        return !m_run || (inputAvail >= minInputBatch && hasSpace);
+    });
 
-        const int inputAvailable = (int)m_inputChannels[0].data.size();
-        const int audioSize = (int)m_audioBuffer.size();
-        const int audioSpaceLeft = std::max(0, m_audioBufferSize - audioSize - 1000);
-        
-        // Always try to render at least minChunkSize to keep audio flowing
-        // When input runs out, we'll hold the last sample
-        int actualInput = std::min({inputAvailable, maxChunkSize});
-        n = std::max(minChunkSize, actualInput);  // At least minChunkSize, or more if input available
-        n = std::min(n, audioSpaceLeft);           // But don't exceed buffer space
-
-        if (n <= 0) {
-            m_processed = true;
-            if (!m_singleThreaded) {
-                m_cv0.notify_one();
-            }
-            return;
-        }
-
-        // Read audio parameters under lock to avoid data race
-        params = m_audioParameters;
-
-        // Read input data while holding the lock
-        for (int i = 0; i < m_inputChannelCount; ++i) {
-            int readAvailable = std::min(actualInput, (int)m_inputChannels[i].data.size());
-            m_inputChannels[i].data.readAndRemove(readAvailable, m_inputChannels[i].transferBuffer);
-            
-            // If we need more samples than available, hold the last sample value
-            if (readAvailable < n) {
-                // Use the last sample from what we read, or use the stored last value
-                float holdSample = (readAvailable > 0) 
-                    ? m_inputChannels[i].transferBuffer[readAvailable - 1]
-                    : (float)m_inputChannels[i].lastInputSample;
-                
-                // Fill the rest with the held sample
-                for (int j = readAvailable; j < n; ++j) {
-                    m_inputChannels[i].transferBuffer[j] = holdSample;
-                }
-            }
-        }
-
-        static int logCounter = 0;
-        static int holdEvents = 0;
-        int inputRead = std::min(actualInput, (int)m_inputChannels[0].data.size());
-        if (inputRead < n) {
-            holdEvents++;
-        }
-        if (++logCounter % 50 == 0) {
-            std::fprintf(stderr, "engine-sim[render]: inputAvail=%d input_read=%d audioSize=%d spaceLeft=%d rendering=%d (hold_events=%d)\n",
-                inputAvailable, inputRead, audioSize, audioSpaceLeft, n, holdEvents);
-        }
-        // Don't set m_processed here - we haven't written to audio buffer yet
+    if (!m_run) {
+        return;
     }
 
-    // Update filter parameters using the safely-read parameters
+    const int inputSize = (int)m_inputChannels[0].data.size();
+    const int audioSize = (int)m_audioBuffer.size();
+    const int audioSpaceLeft = std::max(0, m_audioBufferSize - audioSize - 1000);
+
+    // Don't process unless we have enough input to make a meaningful batch
+    // Exception: if audio buffer is critically low, process whatever we have
+    const bool audioLow = audioSize < 5000;
+    
+    if (inputSize < minInputBatch && !audioLow) {
+        lk0.unlock();
+        return;  // Wait for more input
+    }
+
+    if (inputSize == 0 || audioSpaceLeft <= 0) {
+        lk0.unlock();
+        return;
+    }
+
+    // Process all available input up to maxChunkSize
+    int n = std::min({maxChunkSize, audioSpaceLeft, inputSize});
+
+    if (n <= 0) {
+        lk0.unlock();
+        return;
+    }
+
+    static int s_renderCount = 0;
+    if (++s_renderCount % 100 == 0) {
+        std::fprintf(stderr, "engine-sim[renderAudio #%d]: n=%d input=%d audioSize=%d\n",
+            s_renderCount, n, inputSize, audioSize);
+    }
+
+    // Read and remove input samples
+    for (int i = 0; i < m_inputChannelCount; ++i) {
+        m_inputChannels[i].data.readAndRemove(n, m_inputChannels[i].transferBuffer);
+    }
+
+    lk0.unlock();
+
     for (int i = 0; i < m_inputChannelCount; ++i) {
         m_filters[i].airNoiseLowPass.setCutoffFrequency(
-            static_cast<float>(params.airNoiseFrequencyCutoff), m_audioSampleRate);
-        m_filters[i].jitterFilter.setJitterScale(params.inputSampleNoise);
+            static_cast<float>(m_audioParameters.airNoiseFrequencyCutoff), m_audioSampleRate);
+        m_filters[i].jitterFilter.setJitterScale(m_audioParameters.inputSampleNoise);
     }
 
-    // Render audio samples (CPU-intensive, done outside lock)
-    // Use pre-allocated buffer instead of vector allocation
     for (int i = 0; i < n; ++i) {
-        m_renderBuffer[i] = renderAudio(i, params);
+        m_audioBuffer.write(renderAudio(i));
     }
 
-    // Write rendered samples to output buffer and mark as processed
-    {
-        std::lock_guard<std::mutex> lk(m_lock0);
-        for (int i = 0; i < n; ++i) {
-            m_audioBuffer.write(m_renderBuffer[i]);
-        }
-        // Set m_processed after all work is complete
-        m_processed = true;
-    }
-
-    // Notify waiting threads after releasing the lock
-    if (!m_singleThreaded) {
-        m_cv0.notify_one();
-    }
+    m_cv0.notify_one();
 }
 
 double Synthesizer::getLatency() const {
@@ -465,30 +317,24 @@ void Synthesizer::setInputSampleRate(double sampleRate) {
     }
 }
 
-int16_t Synthesizer::renderAudio(int inputSample, const AudioParameters &params) {
-    const float airNoise = params.airNoise;
-    const float dF_F_mix = params.dF_F_mix;
-    const float convAmount = params.convolution;
+int16_t Synthesizer::renderAudio(int inputSample) {
+    const float airNoise = m_audioParameters.airNoise;
+    const float dF_F_mix = m_audioParameters.dF_F_mix;
+    const float convAmount = m_audioParameters.convolution;
 
     float signal = 0;
     for (int i = 0; i < m_inputChannelCount; ++i) {
-        // Use fast PRNG instead of slow rand()
-        // const float r_0 = fastRandom();  // Currently unused
+        const float r_0 = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
 
         const float jitteredSample =
             m_filters[i].jitterFilter.fast_f(m_inputChannels[i].transferBuffer[inputSample]);
 
         const float f_in = jitteredSample;
         const float f_dc = m_filters[i].inputDcFilter.fast_f(f_in);
-        const bool bypassInputDc =
-            params.inputSampleNoise == 0.0f
-            && params.airNoise == 0.0f
-            && params.dF_F_mix == 0.0f;
-        const float f = bypassInputDc ? f_in : (f_in - f_dc);
+        const float f = f_in - f_dc;
         const float f_p = m_filters[i].derivative.f(f_in);
 
-        // Use fast PRNG instead of slow rand()
-        const float noise = fastRandom();
+        const float noise = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
         const float r =
             m_filters->airNoiseLowPass.fast_f(noise);
         const float r_mixed =
@@ -510,10 +356,8 @@ int16_t Synthesizer::renderAudio(int inputSample, const AudioParameters &params)
 
     signal = m_antialiasing.fast_f(signal);
 
-    m_levelingFilter.p_target = params.levelerTarget;
-    m_levelingFilter.p_maxLevel = params.levelerMaxGain;
-    m_levelingFilter.p_minLevel = params.levelerMinGain;
-    const float v_leveled = m_levelingFilter.f(signal) * params.volume;
+    m_levelingFilter.p_target = m_audioParameters.levelerTarget;
+    const float v_leveled = m_levelingFilter.f(signal) * m_audioParameters.volume;
     int r_int = std::lround(v_leveled);
     if (r_int > INT16_MAX) {
         r_int = INT16_MAX;

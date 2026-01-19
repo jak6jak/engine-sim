@@ -26,6 +26,7 @@ class Transmission {
             Engine *engine);
         void changeGear(int newGear);
         inline int getGear() const { return m_gear; }
+        inline int getGearCount() const { return m_gearCount; }
         inline void setClutchPressure(double pressure) { m_clutchPressure = pressure; }
         inline double getClutchPressure() const { return m_clutchPressure; }
 

@@ -5,8 +5,7 @@ var runtime: Node
 var starter_time_left := 2.5  # Longer starter time
 
 @export var script_path := "res://assets/main.mr"
-# speed_control: 0=full throttle, 1=idle (inverted because of DirectThrottleLinkage)
-@export var speed_control := 0.9  # Start near idle
+@export var speed_control := 0.1  # Start near idle
 @export var throttle_sensitivity := 2.0  # How fast throttle responds per second
 
 func _ready() -> void:
@@ -26,10 +25,13 @@ func _ready() -> void:
 	runtime.set_starter_enabled(true)
 	runtime.set_audio_debug_enabled(true)
 	runtime.set_audio_debug_interval(1.0)
+	
+	# Run simulation 10% faster than real-time to build audio buffer headroom
+	runtime.set_simulation_speed(1.1)
 
 	# Start audio with Godot's mix rate
 	var mix_rate := AudioServer.get_mix_rate()
-	runtime.start_audio(mix_rate, 0.3)
+	runtime.start_audio(mix_rate, 0.5)  # Increased buffer for smoother audio
 
 	print("Engine sim demo started!")
 	print("  Script: ", script_to_load)

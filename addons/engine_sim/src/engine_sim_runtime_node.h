@@ -29,6 +29,13 @@ public:
     void set_starter_enabled(bool enabled);
     void set_ignition_enabled(bool enabled);  // Enable spark plugs
 
+    // Transmission/clutch control
+    void set_gear(int gear);  // -1=reverse, 0=neutral, 1-N=forward gears
+    int get_gear() const;
+    int get_gear_count() const;  // Number of forward gears
+    void set_clutch_pressure(double pressure_0_to_1);  // 0=disengaged, 1=fully engaged
+    double get_clutch_pressure() const;
+
     void start_audio(double mix_rate = 44100.0, double buffer_length = 0.1);
     void stop_audio();
     bool is_audio_running() const;
@@ -40,6 +47,9 @@ public:
 
     void set_max_sim_steps_per_frame(int steps);
     int get_max_sim_steps_per_frame() const;
+
+    void set_simulation_speed(double speed);
+    double get_simulation_speed() const;
 
     PackedVector2Array read_audio_stereo(int frames);
     void wait_audio_processed();
@@ -68,7 +78,7 @@ private:
 
     std::vector<int16_t> m_audio_pcm16_tmp;
 
-    int m_audio_chunk_frames = 512;
+    int m_audio_chunk_frames = 128;  // Smaller chunks to avoid shortfalls
     int m_audio_budget_frames = 16384;
     bool m_sim_frame_active = false;
     // Default to a high limit (approx 2s at 10kHz) so we normally finish frames in one go.

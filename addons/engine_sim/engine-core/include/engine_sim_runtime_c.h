@@ -50,6 +50,23 @@ ES_RUNTIME_API void es_runtime_wait_audio_processed(es_runtime_t *rt);
 // Engine state queries
 ES_RUNTIME_API double es_runtime_get_engine_speed(es_runtime_t *rt);  // Returns engine RPM
 
+// Simulation speed: 1.0 = real-time, 1.1 = 10% faster, etc.
+// Running faster than real-time builds audio buffer headroom.
+ES_RUNTIME_API void es_runtime_set_simulation_speed(es_runtime_t *rt, double speed);
+ES_RUNTIME_API double es_runtime_get_simulation_speed(es_runtime_t *rt);
+
+// Simulation frequency in Hz (default from engine script, typically 10000-20000)
+// Lower values = faster simulation but lower audio quality
+ES_RUNTIME_API void es_runtime_set_simulation_frequency(es_runtime_t *rt, double freq);
+ES_RUNTIME_API double es_runtime_get_simulation_frequency(es_runtime_t *rt);
+
+// Transmission/clutch control
+ES_RUNTIME_API void es_runtime_set_gear(es_runtime_t *rt, int gear);  // -1=reverse, 0=neutral, 1-N=forward gears
+ES_RUNTIME_API int es_runtime_get_gear(es_runtime_t *rt);
+ES_RUNTIME_API int es_runtime_get_gear_count(es_runtime_t *rt);  // Number of forward gears
+ES_RUNTIME_API void es_runtime_set_clutch_pressure(es_runtime_t *rt, double pressure_0_to_1);  // 0=disengaged, 1=fully engaged
+ES_RUNTIME_API double es_runtime_get_clutch_pressure(es_runtime_t *rt);
+
 #ifdef __cplusplus
 }
 #endif

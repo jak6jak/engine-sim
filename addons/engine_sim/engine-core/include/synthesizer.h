@@ -18,15 +18,15 @@
 class Synthesizer {
     public:
         struct AudioParameters {
-            float volume = 10.0f;
+            float volume = 1.0f;  // Was 10.0f - caused clipping with levelerTarget
             float convolution = 1.0f;
             float dF_F_mix = 0.01f;
             float inputSampleNoise = 0.5f;
             float inputSampleNoiseFrequencyCutoff = 10000.0f;
             float airNoise = 1.0f;
             float airNoiseFrequencyCutoff = 2000.0f;
-            float levelerTarget = 30000.0f;
-            float levelerMaxGain = 100.0f;  // Allow much higher gain for quiet engines
+            float levelerTarget = 20000.0f;  // Target ~60% of max to leave headroom
+            float levelerMaxGain = 100.0f;
             float levelerMinGain = 0.00001f;
         };
 
@@ -43,7 +43,6 @@ class Synthesizer {
             RingBuffer<float> data;
             float *transferBuffer = nullptr;
             double lastInputSample = 0.0f;
-            double fractionalAccumulator = 0.0;
         };
 
         struct ProcessingFilters {
@@ -72,7 +71,6 @@ class Synthesizer {
         int readAudioOutput(int samples, int16_t *buffer);
 
         void writeInput(const double *data);
-        void writeInputBatch(const double *data);  // Alternative that may trigger more processing
         void endInputBlock();
 
         void waitProcessed();
@@ -88,7 +86,7 @@ class Synthesizer {
         void setInputSampleRate(double sampleRate);
         double getInputSampleRate() const { return m_inputSampleRate; }
 
-        int16_t renderAudio(int inputOffset, const AudioParameters &params);
+        int16_t renderAudio(int inputOffset);
 
         double getLevelerGain();
         AudioParameters getAudioParameters();
@@ -100,9 +98,6 @@ class Synthesizer {
         InputChannel *m_inputChannels;
         AudioParameters m_audioParameters;
         
-        // Input batching support
-        int m_batchInputCallCount = 0;
-        static constexpr int BATCH_PROCESS_INTERVAL = 10;  // Process every 10 input calls
         int m_inputChannelCount;
         int m_inputBufferSize;
         int m_inputSamplesRead;
@@ -117,29 +112,14 @@ class Synthesizer {
         float m_audioSampleRate;
 
         std::thread *m_thread;
-        std::atomic<bool> m_run;
+        bool m_run;
         bool m_processed;
-        bool m_singleThreaded = true;
 
         std::mutex m_lock0;
+        std::mutex m_inputLock;
         std::condition_variable m_cv0;
 
         ProcessingFilters *m_filters;
-
-        // Pre-allocated buffer for renderAudio to avoid hot-path allocation
-        int16_t *m_renderBuffer;
-        size_t m_renderBufferCapacity;
-
-        // Fast PRNG state for audio synthesis (replaces slow rand())
-        uint32_t m_rngState;
-
-        // Fast xorshift32 PRNG - much faster than rand()
-        inline float fastRandom() {
-            m_rngState ^= m_rngState << 13;
-            m_rngState ^= m_rngState >> 17;
-            m_rngState ^= m_rngState << 5;
-            return (m_rngState / 4294967296.0f) * 2.0f - 1.0f;  // Map to [-1, 1]
-        }
 
 };
 

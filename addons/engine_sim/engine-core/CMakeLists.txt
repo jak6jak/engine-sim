@@ -378,11 +378,13 @@ add_executable(engine-sim-test
     test/gas_system_tests.cpp
     test/function_test.cpp
     test/synthesizer_tests.cpp
+    test/profile_sim.cpp
 )
 
 target_link_libraries(engine-sim-test
     gtest_main
     engine-sim
+    engine-sim-runtime
 )
 
 include(GoogleTest)
