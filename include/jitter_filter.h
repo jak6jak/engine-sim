@@ -27,11 +27,17 @@ public:
             m_offset = 0;
         }
 
-        std::uniform_real_distribution<float> dist(
-            0.0f,
-            static_cast<float>(m_maxJitter - 1));
-        
-        const float s = m_noiseFilter.fast_f(dist(m_generator) * m_jitterScale * jitterScale);
+        if (m_maxJitter <= 1 || m_jitterScale <= 0.0f || jitterScale <= 0.0f) {
+            return sample;
+        }
+
+        // Use fast xorshift32 PRNG instead of expensive std::uniform_real_distribution
+        m_rngState ^= m_rngState << 13;
+        m_rngState ^= m_rngState >> 17;
+        m_rngState ^= m_rngState << 5;
+        const float randomValue = (m_rngState / 4294967296.0f) * static_cast<float>(m_maxJitter - 1);
+
+        const float s = m_noiseFilter.fast_f(randomValue * m_jitterScale * jitterScale);
         const float s_i_0 = clamp(std::floor(s), 0.0f, static_cast<float>(m_maxJitter - 1));
         const float s_i_1 = clamp(std::ceil(s), 0.0f, static_cast<float>(m_maxJitter - 1));
 
@@ -57,7 +63,8 @@ protected:
     int m_offset;
     float *m_history;
 
-    std::default_random_engine m_generator;
+    // Fast xorshift32 PRNG state (replaced slow std::default_random_engine)
+    uint32_t m_rngState;
 };
 
 #endif /* ATG_ENGINE_SIM_JITTER_FILTER_H */

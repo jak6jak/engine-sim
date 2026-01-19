@@ -1,15 +1,30 @@
 [submodule "dependencies/submodules/delta-studio"]
-	path = dependencies/submodules/delta-studio
+	path = addons/engine_sim/engine-core/dependencies/submodules/delta-studio
 	url = https://github.com/ange-yaghi/delta-studio
 [submodule "dependencies/submodules/simple-2d-constraint-solver"]
-	path = dependencies/submodules/simple-2d-constraint-solver
+	path = addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver
 	url = https://github.com/ange-yaghi/simple-2d-constraint-solver
 [submodule "dependencies/submodules/direct-to-video"]
-	path = dependencies/submodules/direct-to-video
+	path = addons/engine_sim/engine-core/dependencies/submodules/direct-to-video
 	url = https://github.com/ange-yaghi/direct-to-video
 [submodule "dependencies/submodules/csv-io"]
-	path = dependencies/submodules/csv-io
+	path = addons/engine_sim/engine-core/dependencies/submodules/csv-io
 	url = https://github.com/ange-yaghi/csv-io
 [submodule "dependencies/submodules/piranha"]
-	path = dependencies/submodules/piranha
+	path = addons/engine_sim/engine-core/dependencies/submodules/piranha
 	url = https://github.com/ange-yaghi/piranha.git
+[submodule "addons/engine_sim/engine-core/dependencies/submodules/csv-io"]
+	path = addons/engine_sim/engine-core/dependencies/submodules/csv-io
+	url = https://github.com/ange-yaghi/csv-io.git
+[submodule "addons/engine_sim/engine-core/dependencies/submodules/piranha"]
+	path = addons/engine_sim/engine-core/dependencies/submodules/piranha
+	url = https://github.com/ange-yaghi/piranha.git
+[submodule "addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver"]
+	path = addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver
+	url = https://github.com/ange-yaghi/simple-2d-constraint-solver
+[submodule "addons/engine_sim/engine-core/dependencies/submodules/delta-studio"]
+	path = addons/engine_sim/engine-core/dependencies/submodules/delta-studio
+	url = https://github.com/ange-yaghi/delta-studio
+[submodule "addons/engine_sim/engine-core/dependencies/submodules/direct-to-video"]
+	path = addons/engine_sim/engine-core/dependencies/submodules/direct-to-video
+	url = https://github.com/ange-yaghi/direct-to-video

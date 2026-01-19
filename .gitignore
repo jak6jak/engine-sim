@@ -4,6 +4,28 @@ workspace/
 # Build directory
 build/
 
+# CMake build artifacts in root directory
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Makefile
+cmake_install.cmake
+_deps/
+lib/
+*.a
+engine-sim-test
+engine-sim-test[1]_include.cmake
+engine-sim-test[1]_tests.cmake
+
+# Godot generated files
+godot-demo/.godot/
+godot-cpp/
+
+# SCons build artifacts
+.sconsign.dblite
+*.os
+*.o
+
 # clangd cache and code completion files
 .cache
 compile_commands.json
