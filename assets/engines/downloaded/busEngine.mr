@@ -1,0 +1,439 @@
+import "engine_sim.mr"
+
+
+
+units units()
+constants constants()
+impulse_response_library ir_lib()
+
+private node wires {
+    output wire1: ignition_wire();
+    output wire2: ignition_wire();
+    output wire3: ignition_wire();
+    output wire4: ignition_wire();
+    output wire5: ignition_wire();
+    output wire6: ignition_wire();
+}
+
+label cycle(2 * 360 * units.deg)
+public node wb_ignition {
+    input wires;
+    input timing_curve;
+    input rev_limit: 9800 * units.rpm;
+    alias output __out:
+        ignition_module(
+            timing_curve: timing_curve,
+            rev_limit: rev_limit,
+            limiter_duration: 0.09
+        )
+            // Inline-6 4-stroke cycle = 720 deg, firing every 120 deg.
+            // Firing order comment below indicates: 1 5 3 6 2 4
+            .connect_wire(wires.wire1, (0.0 / 6.0) * cycle)
+            .connect_wire(wires.wire5, (1.0 / 6.0) * cycle)
+            .connect_wire(wires.wire3, (2.0 / 6.0) * cycle)
+            .connect_wire(wires.wire6, (3.0 / 6.0) * cycle)
+            .connect_wire(wires.wire2, (4.0 / 6.0) * cycle)
+            .connect_wire(wires.wire4, (5.0 / 6.0) * cycle);
+}
+
+public node        MAN_D0836LFL_camshaft_builder {
+    input lobe_profile: comp_cams_magnum_11_450_8_lobe_profile();
+    input intake_lobe_profile: lobe_profile;
+    input exhaust_lobe_profile: lobe_profile;
+    input lobe_separation: 110.0 * units.deg;
+    input intake_lobe_center: lobe_separation;
+    input exhaust_lobe_center: lobe_separation;
+    input advance: 0.0 * units.deg;
+    input base_radius: 0.76 * units.inch;
+
+    output intake_cam: _intake_cam;
+    output exhaust_cam: _exhaust_cam;
+
+    camshaft_parameters params(
+        advance: advance,
+        base_radius: base_radius
+    )
+
+    camshaft _intake_cam(params, lobe_profile: intake_lobe_profile)
+    camshaft _exhaust_cam(params, lobe_profile: exhaust_lobe_profile)
+
+    label rot(2 * (360 / 3.0) * units.deg)
+    label rot360(360 * units.deg)
+
+    // 1 5 3 6 2 4
+    _exhaust_cam
+        .add_lobe((rot360 - exhaust_lobe_center) + 3 * rot)
+        .add_lobe((rot360 - exhaust_lobe_center) + 3 * rot)
+        .add_lobe((rot360 - exhaust_lobe_center) + 1 * rot)
+        .add_lobe((rot360 - exhaust_lobe_center) + 1 * rot)
+        .add_lobe((rot360 - exhaust_lobe_center) + 2 * rot)
+        .add_lobe((rot360 - exhaust_lobe_center) + 2 * rot)
+
+    _intake_cam
+        .add_lobe(rot360 + intake_lobe_center + 3 * rot)
+        .add_lobe(rot360 + intake_lobe_center + 3 * rot)
+        .add_lobe(rot360 + intake_lobe_center + 1 * rot)
+        .add_lobe(rot360 + intake_lobe_center + 1 * rot)
+        .add_lobe(rot360 + intake_lobe_center + 2 * rot)
+        .add_lobe(rot360 + intake_lobe_center + 2 * rot)
+}
+
+private node        MAN_D0836LFL_head {
+    input intake_camshaft;
+    input exhaust_camshaft;
+    input chamber_volume: 67.35 * units.cc;
+    input intake_runner_volume: 149.6 * units.cc;
+    input intake_runner_cross_section_area: 38.1 * units.mm * 38.1 * units.mm;
+    input exhaust_runner_volume: 181.3 * units.cc;
+    input exhaust_runner_cross_section_area: 41.91 * units.mm * 41.91 * units.mm;
+
+    input flow_attenuation: 1.0;
+    input lift_scale: 1.0;
+    input flip_display: false;
+    alias output __out: head;
+
+    function intake_flow(50 * units.thou)
+    intake_flow
+        .add_flow_sample(0 * lift_scale, 0 * flow_attenuation)
+        .add_flow_sample(50 * lift_scale, 58 * flow_attenuation)
+        .add_flow_sample(100 * lift_scale, 103 * flow_attenuation)
+        .add_flow_sample(150 * lift_scale, 156 * flow_attenuation)
+        .add_flow_sample(200 * lift_scale, 214 * flow_attenuation)
+        .add_flow_sample(250 * lift_scale, 249 * flow_attenuation)
+        .add_flow_sample(300 * lift_scale, 268 * flow_attenuation)
+        .add_flow_sample(350 * lift_scale, 280 * flow_attenuation)
+        .add_flow_sample(400 * lift_scale, 280 * flow_attenuation)
+        .add_flow_sample(450 * lift_scale, 281 * flow_attenuation)
+
+    function exhaust_flow(50 * units.thou)
+    exhaust_flow
+        .add_flow_sample(0 * lift_scale, 0 * flow_attenuation)
+        .add_flow_sample(50 * lift_scale, 37 * flow_attenuation)
+        .add_flow_sample(100 * lift_scale, 72 * flow_attenuation)
+        .add_flow_sample(150 * lift_scale, 113 * flow_attenuation)
+        .add_flow_sample(200 * lift_scale, 160 * flow_attenuation)
+        .add_flow_sample(250 * lift_scale, 196 * flow_attenuation)
+        .add_flow_sample(300 * lift_scale, 222 * flow_attenuation)
+        .add_flow_sample(350 * lift_scale, 235 * flow_attenuation)
+        .add_flow_sample(400 * lift_scale, 245 * flow_attenuation)
+        .add_flow_sample(450 * lift_scale, 246 * flow_attenuation)
+
+    generic_cylinder_head head(
+        chamber_volume: chamber_volume,
+        intake_runner_volume: intake_runner_volume,
+        intake_runner_cross_section_area: intake_runner_cross_section_area,
+        exhaust_runner_volume: exhaust_runner_volume,
+        exhaust_runner_cross_section_area: exhaust_runner_cross_section_area,
+
+        intake_port_flow: intake_flow,
+        exhaust_port_flow: exhaust_flow,
+        valvetrain: standard_valvetrain(
+            intake_camshaft: intake_camshaft,
+            exhaust_camshaft: exhaust_camshaft
+        ),
+        flip_display: flip_display
+    )
+}
+
+private node turbulence_to_flame_speed_ratio {
+    alias output __out:
+        function(5.0)
+            .add_sample(0.0, 3.0)
+            .add_sample(5.0, 2.5 * 5.0)
+            .add_sample(10.0, 2.5 * 10.0)
+            .add_sample(15.0, 2.5 * 15.0)
+            .add_sample(20.0, 2.5 * 20.0)
+            .add_sample(25.0, 2.5 * 25.0)
+            .add_sample(30.0, 2.5 * 30.0)
+            .add_sample(35.0, 2.5 * 35.0)
+            .add_sample(40.0, 2.5 * 40.0)
+            .add_sample(45.0, 3.0 * 40.0)
+            .add_sample(50.0, 3.5 * 45.0);
+}
+
+public node MAN_D0836LFL {
+    alias output __out: engine;
+
+    wires wires()
+
+    engine engine(
+        name: "MAN D0836LFL",
+        starter_torque: 175 * units.lb_ft,
+        starter_speed: 150 * units.rpm,
+        redline: 2640 * units.rpm,
+         fuel: fuel(
+		turbulence_to_flame_speed_ratio: turbulence_to_flame_speed_ratio(),
+		molecular_mass: 170 * units.g,
+		energy_density: 44.8 * units.kJ / units.g,
+		density: 0.832 * units.kg / units.L,
+		molecular_afr: 14.5,
+		max_turbulence_effect: 5.0,
+		max_dilution_effect: 0.0,
+		burning_efficiency_randomness: 0.05,
+        max_burning_efficiency: 0.37
+            ),
+        hf_gain: 0.01,
+        noise: 1.0,
+        jitter: 0.23,
+        simulation_frequency: 8000
+    )
+
+    label stroke(125.0 * units.mm)
+    label bore(108.0 * units.mm)
+    label rod_length(178 * units.mm)
+    label rod_mass(1650 * units.g)
+    label compression_height(32.8 * units.mm)
+    label crank_mass(29.5 * units.kg)
+    label flywheel_mass(50 * units.kg)
+    label flywheel_radius(24 * units.inch)
+
+    label crank_moment(
+        disk_moment_of_inertia(mass: crank_mass, radius: stroke / 2)
+    )
+    label flywheel_moment(
+        disk_moment_of_inertia(mass: flywheel_mass, radius: flywheel_radius)
+    )
+    label other_moment( // Moment from cams, pulleys, etc [estimated]
+        disk_moment_of_inertia(mass: 20 * units.kg, radius: 8.0 * units.cm)
+    )
+
+    crankshaft c0(
+        throw: stroke / 2,
+        flywheel_mass: flywheel_mass,
+        mass: crank_mass,
+        friction_torque: 15.0 * units.lb_ft,
+        moment_of_inertia:
+            crank_moment + flywheel_moment + other_moment,
+        position_x: 0.0,
+        position_y: 0.0,
+        tdc: constants.pi / 2
+    )
+
+
+    rod_journal rj0(angle: 3.0 * cycle/3.0)
+    rod_journal rj1(angle: 3.0 * cycle/3.0)
+    rod_journal rj2(angle: 1.0 * cycle/3.0)
+    rod_journal rj3(angle: 1.0 * cycle/3.0)
+    rod_journal rj4(angle: 2.0 * cycle/3.0)
+    rod_journal rj5(angle: 2.0 * cycle/3.0)
+
+    c0
+        .add_rod_journal(rj0)
+        .add_rod_journal(rj1)
+        .add_rod_journal(rj2)
+        .add_rod_journal(rj3)
+        .add_rod_journal(rj4)
+        .add_rod_journal(rj5)
+
+    piston_parameters piston_params(
+        mass: (1000) * units.g,
+        blowby: 0.0513,
+        compression_height: compression_height,
+        wrist_pin_position: 0 * units.mm,
+        displacement: 0.0
+    )
+
+    connecting_rod_parameters cr_params(
+        mass: rod_mass,
+        moment_of_inertia: rod_moment_of_inertia(
+            mass: rod_mass,
+            length: rod_length
+        ),
+        center_of_mass: 0.0,
+        length: rod_length
+    )
+
+    cylinder_bank_parameters bank_params(
+        bore: bore,
+        deck_height: stroke / 2 + rod_length + compression_height
+    )
+
+intake intake(
+    plenum_volume: 6.8 * units.L,
+    plenum_cross_section_area: 80.0 * units.cm2,
+    intake_flow_rate: k_carb(460.0),
+    runner_flow_rate: k_carb(300.0),
+    runner_length: 15.0 * units.inch,
+    idle_flow_rate: k_carb(10.0),
+    idle_throttle_plate_position: 0.97
+)
+
+exhaust_system_parameters es_params(
+    outlet_flow_rate: k_carb(500.0),
+    primary_tube_length: 20.0 * units.inch,
+    primary_flow_rate: k_carb(320.0),
+    velocity_decay: 0.65
+)
+    
+    exhaust_system exhaust0(
+        es_params,
+        length: 100.0 * units.inch,
+        audio_volume: 1.0,
+        impulse_response: ir_lib.default_0)
+
+    label spacing(0 * units.inch)
+
+    cylinder_bank b0(bank_params, angle: 0)
+    b0
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.1)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj0,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire1,
+            primary_length: 5 * spacing + 4 * units.cm,
+            sound_attenuation: 0.9
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.05)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj1,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire2,
+            primary_length: 4 * spacing + 3 * units.cm,
+            sound_attenuation: 0.95
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.1)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj2,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire3,
+            primary_length: 3 * spacing + 2 * units.cm,
+            sound_attenuation: 0.9
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.05)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj3,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire4,
+            primary_length: 2 * spacing + 1 * units.cm,
+            sound_attenuation: 0.97
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.1)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj4,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire5,
+            primary_length: 1 * spacing + 3 * units.cm,
+            sound_attenuation: 0.98
+        )
+        .add_cylinder(
+            piston: piston(piston_params, blowby: k_28inH2O(0.05)),
+            connecting_rod: connecting_rod(cr_params),
+            rod_journal: rj5,
+            intake: intake,
+            exhaust_system: exhaust0,
+            ignition_wire: wires.wire6,
+            primary_length: 0 * spacing + 5 * units.cm,
+            sound_attenuation: 0.93
+        )
+
+    engine
+        .add_cylinder_bank(b0)
+
+    engine.add_crankshaft(c0)
+
+    harmonic_cam_lobe intake_lobe(
+        duration_at_50_thou: 220 * units.deg,
+        gamma: 1.1,
+        lift: 11.43 * units.mm,
+        steps: 100
+    )
+
+    harmonic_cam_lobe exhaust_lobe(
+        duration_at_50_thou: 220 * units.deg,
+        gamma: 1.1,
+        lift: 11.049 * units.mm,
+        steps: 100
+    )
+
+           MAN_D0836LFL_camshaft_builder camshaft(
+        lobe_profile: "N/A",
+
+        intake_lobe_profile: intake_lobe,
+        exhaust_lobe_profile: exhaust_lobe,
+        intake_lobe_center: 116 * units.deg,
+        exhaust_lobe_center: 116 * units.deg,
+        base_radius: (34.0 / 2) * units.mm
+    )
+
+    b0.set_cylinder_head (
+               MAN_D0836LFL_head(
+            chamber_volume: 67.35 * units.cc,
+            intake_camshaft: camshaft.intake_cam,
+            exhaust_camshaft: camshaft.exhaust_cam,
+            flow_attenuation: 0.9
+        )
+    )
+
+    function timing_curve(1000 * units.rpm)
+    timing_curve
+        .add_sample(0000 * units.rpm, 0 * units.deg)
+        .add_sample(0100 * units.rpm, 2 * units.deg)
+        .add_sample(0500 * units.rpm, 5 * units.deg)
+        .add_sample(1000 * units.rpm, 10 * units.deg)
+        .add_sample(2000 * units.rpm, 15 * units.deg)
+        .add_sample(3000 * units.rpm, 18 * units.deg)
+
+    engine.add_ignition_module(
+        wb_ignition(
+            wires: wires,
+            timing_curve: timing_curve,
+            rev_limit: 2500 * units.rpm
+        )
+    )
+}
+
+label car_mass(10400 * units.kg)
+
+private node Busways_Bus_2738_on_a_MAN_A69_18_280_chassis{
+    alias output __out:
+        vehicle(
+            mass: car_mass,
+            drag_coefficient: 0.65,
+            cross_sectional_area: (98 * units.inch) * (116 * units.inch),
+            diff_ratio: 3.77,
+            tire_radius: 471 * units.mm,
+            rolling_resistance: 2200 * units.N,
+            stiffness: 150 * units.lb_ft / units.deg,
+            damping: 25.0,
+            max_flex: 4 * units.deg,
+            limit_flex: true,
+            simulate_flex: true,
+			max_brake_force: 86700 * units.N
+        );
+}
+
+private node ZFS6850_transmission {
+    alias output __out:
+        transmission(
+            max_clutch_torque: 1100 * units.Nm,
+            max_clutch_flex: 2 * units.deg,
+            limit_clutch_flex: true,
+            clutch_stiffness: 80 * units.Nm / units.deg,
+            clutch_damping: 3.0,
+            simulate_flex: true
+        )
+        .add_gear(2.73)
+        .add_gear(1.76)
+        .add_gear(1.23)
+        .add_gear(1.00)
+        .add_gear(0.83)
+        .add_gear(0.67);
+}
+
+public node main {
+    run(
+        engine: MAN_D0836LFL(),
+        transmission: ZFS6850_transmission(),
+        vehicle: Busways_Bus_2738_on_a_MAN_A69_18_280_chassis()
+    )
+}

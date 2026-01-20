@@ -146,6 +146,7 @@ void es_script::LanguageRules::registerBuiltinNodeTypes() {
     registerBuiltinType<SetApplicationSettingsNode>("__engine_sim__set_application_settings");
     registerBuiltinType<SetVehicleNode>("__engine_sim__set_vehicle");
     registerBuiltinType<SetTransmissionNode>("__engine_sim__set_transmission");
+    registerBuiltinType<RunNode>("__engine_sim__run");
     registerBuiltinType<AddGearNode>("__engine_sim__add_gear");
 
     // Objects

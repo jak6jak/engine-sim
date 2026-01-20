@@ -608,10 +608,25 @@ public node vehicle => __engine_sim__vehicle {
     input tire_radius [float]: 10 * units.inch;
     input rolling_resistance [float]: 2000;
 
+    // Compatibility inputs (currently unused by core simulator).
+    input stiffness [float]: 0;
+    input damping [float]: 0;
+    input max_flex [float]: 0;
+    input limit_flex [bool]: false;
+    input simulate_flex [bool]: false;
+    input max_brake_force [float]: 0;
+
     alias output __out [vehicle_channel];
 }
 
 public node transmission => __engine_sim__transmission {
     input max_clutch_torque [float]: 1000 * units.lb_ft;
+
+    // Compatibility inputs (currently unused by core simulator).
+    input max_clutch_flex [float]: 0;
+    input limit_clutch_flex [bool]: false;
+    input clutch_stiffness [float]: 0;
+    input clutch_damping [float]: 0;
+    input simulate_flex [bool]: false;
     alias output __out [transmission_channel];
 }

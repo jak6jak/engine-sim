@@ -59,30 +59,79 @@ I wrote this to demo in a [YouTube video](https://youtu.be/RKT-sKtR970), not as 
 
 ### Quick Build (macOS/Linux)
 
-The project uses SCons to orchestrate the build process. Simply run:
+For performance testing/profiling, make sure you are using an optimized **Release** build and the **arm64** architecture.
+
+1) Build engine-core via CMake (Release + arm64):
 
 ```bash
-scons platform=macos arch=arm64 target=template_debug
+cd addons/engine_sim/engine-core
+cmake --preset macos-arm64-release
+cmake --build --preset macos-arm64-release -j 8
 ```
 
-This will:
-1. Configure and build the C++ engine-core library via CMake
-2. Build the GDExtension wrapper that links to engine-core
+2) Build the GDExtension via SCons (template_release) and point it at the CMake build dir:
+
+```bash
+scons -C addons/engine_sim platform=macos arch=arm64 target=template_release \
+    engine_sim_build_dir=addons/engine_sim/engine-core/build/macos-arm64-release
+```
+
+If you're running inside the Godot editor, it will typically load the **debug** variant. For profiling inside the editor:
+
+```bash
+scons -C addons/engine_sim platform=macos arch=arm64 target=template_debug optimize=yes \
+    engine_sim_build_dir=addons/engine_sim/engine-core/build/macos-arm64-release
+```
+
+For higher-quality profiling in Instruments (symbols + timeline markers), build engine-core with the signpost preset and point the GDExtension at it:
+
+```bash
+cd addons/engine_sim/engine-core
+cmake --preset macos-arm64-relwithdebinfo-signpost
+cmake --build --preset macos-arm64-relwithdebinfo-signpost -j 8
+
+cd ../../..
+scons -C addons/engine_sim platform=macos arch=arm64 target=template_debug optimize=yes \
+    engine_sim_build_dir=addons/engine_sim/engine-core/build/macos-arm64-relwithdebinfo-signpost
+```
+
+Then open **Instruments** → **Points of Interest** (and optionally **Time Profiler**), attach to the running Godot editor process, and look for intervals like:
+- `Simulator::simulateStep`
+- `physics::process`
+- `entities::update`
+- `dyno::sample`
+- `simulateStep_+synth`
+
+Alternatively, you can record a trace from the command line by launching Godot under Instruments (this avoids PID hunting when the game runs in a separate process):
+
+```bash
+GODOT_BIN=/Users/jacobedie/Documents/Godot/godot/bin/godot.macos.editor.arm64
+OUT=build/traces/godot-$(date +%Y%m%d-%H%M%S).trace
+
+mkdir -p build/traces
+xcrun xctrace record \
+    --template "Time Profiler" \
+    --instrument os_signpost \
+    --instrument os_log \
+    --time-limit 20s \
+    --output "$OUT" \
+    --launch -- "$GODOT_BIN" --path "$PWD" --scene "res://scenes/demo.tscn"
+```
+
+Notes:
+- Use `--time-limit` for duration; `--quit-after` is **iterations/frames**, not seconds.
+- Open the resulting `.trace` in Instruments and filter signposts by subsystem `engine-sim` and category `perf`.
 
 **Build Options:**
 - `platform` - Target platform (default: macos)
 - `arch` - Target architecture: arm64, x86_64 (default: arm64)
 - `target` - Build variant: template_debug, template_release (default: template_debug)
-- `cmake_only=yes` - Only build the CMake portion
-- `gdext_only=yes` - Only build the GDExtension (assumes CMake already built)
+- `perf=yes` - Enables lightweight perf toggles in the GDExtension build (engine-core perf markers are configured via CMake options/presets)
 
 **Environment Variables:**
 - `ENGINE_SIM_BUILD_DIR` - Override CMake build directory (default: addons/engine_sim/engine-core/build)
 
-**Legacy Scripts (deprecated):**
-If you prefer bash scripts, these are still available:
-- [scripts/build_all.sh](scripts/build_all.sh) (engine-sim + GDExtension)
-- [scripts/build_gdext.sh](scripts/build_gdext.sh) (GDExtension only)
+**Note:** There are legacy bash scripts in `scripts/`, but the recommended workflow is direct `cmake` + `scons` commands (as above).
 
 ### Step 1 - Clone the repository
 ```git clone --recurse-submodules https://github.com/ange-yaghi/engine-sim```

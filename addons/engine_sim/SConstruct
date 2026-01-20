@@ -17,11 +17,16 @@ arch = ARGUMENTS.get("arch", "arm64")
 target = ARGUMENTS.get("target", "template_debug")
 compiledb = ARGUMENTS.get("compiledb", "no")
 compiledb_file = ARGUMENTS.get("compiledb_file", "compile_commands.json")
+engine_sim_build_dir_arg = ARGUMENTS.get("engine_sim_build_dir")
+perf = ARGUMENTS.get("perf", "no")
+optimize = ARGUMENTS.get("optimize", "no")
 
 def _is_truthy(v):
     return str(v).lower() in ("1", "y", "yes", "true", "on")
 
 compiledb_enabled = _is_truthy(compiledb)
+perf_enabled = _is_truthy(perf)
+optimize_enabled = _is_truthy(optimize)
 
 # NOTE: SCons doesn't reliably define __file__ for SConstruct execution.
 # Use SCons' filesystem nodes to locate the SConstruct directory.
@@ -34,9 +39,10 @@ godot_cpp_path = os.environ.get("GODOT_CPP_PATH")
 if not godot_cpp_path:
     godot_cpp_path = os.path.join(engine_core_dir, "godot-cpp")
 
-engine_sim_build_dir = os.environ.get(
-    "ENGINE_SIM_BUILD_DIR",
-    os.path.join(engine_core_dir, "build")
+engine_sim_build_dir = (
+    engine_sim_build_dir_arg
+    or os.environ.get("ENGINE_SIM_BUILD_DIR")
+    or os.path.join(engine_core_dir, "build")
 )
 
 # Homebrew default on Apple Silicon
@@ -48,10 +54,25 @@ env["CXX"] = os.environ.get("CXX", "clang++")
 
 env.Append(CXXFLAGS=["-std=c++17", "-fPIC"])
 
+# Build mode:
+# - template_release: optimized by default
+# - template_debug: unoptimized by default
+# - optimize=yes: force optimization even for template_debug (useful for profiling in the editor)
+if "release" in target or optimize_enabled:
+    env.Append(CXXFLAGS=["-O3", "-DNDEBUG"])
+else:
+    env.Append(CXXFLAGS=["-O0", "-g"])
+
+if perf_enabled:
+    env.Append(CPPDEFINES=[("ENGINE_SIM_ENABLE_STEP_TIMING", 1)])
+
 # Match godot-cpp's platform defines so Wrapped's thread-local behavior is
 # consistent between our extension objects and the linked godot-cpp archive.
 if platform == "macos":
-    env.Append(CPPDEFINES=["MACOS_ENABLED", "HOT_RELOAD_ENABLED"])
+    cpp_defines = ["MACOS_ENABLED"]
+    if "debug" in target:
+        cpp_defines.append("HOT_RELOAD_ENABLED")
+    env.Append(CPPDEFINES=cpp_defines)
 
 env.Append(CPPPATH=[
     os.path.join(root, "src"),
@@ -99,11 +120,25 @@ if len(all_godot_cpp) == 0:
 
 def choose_godot_cpp_lib():
     # Prefer matching target+arch if present.
+    matches = []
     for lib in all_godot_cpp:
         if (target in lib) and (arch in lib):
-            return lib
-    # Fallback: just take the first.
-    return all_godot_cpp[0]
+            matches.append(lib)
+
+    if len(matches) > 0:
+        return matches[0]
+
+    # If the user only has one godot-cpp archive built, accept it.
+    if len(all_godot_cpp) == 1:
+        return all_godot_cpp[0]
+
+    print("ERROR: Could not find a matching godot-cpp archive for target=%s arch=%s" % (target, arch))
+    print("Available godot-cpp archives:")
+    for lib in all_godot_cpp:
+        print("  - %s" % lib)
+    print("Build godot-cpp for the requested target, e.g.:")
+    print("  scons -C %s platform=%s arch=%s target=%s" % (godot_cpp_path, platform, arch, target))
+    Exit(1)
 
 godot_cpp_lib = choose_godot_cpp_lib()
 

@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <chrono>
+#include <cstring>
 
 #undef min
 #undef max
@@ -76,6 +77,8 @@ void Synthesizer::initialize(const Parameters &p) {
     m_levelingFilter.p_minLevel = m_audioParameters.levelerMinGain;
     m_antialiasing.setCutoffFrequency(m_audioSampleRate * 0.45f, m_audioSampleRate);
 
+    // Master convolution is initialized when an impulse response is provided.
+
     // Don't pre-fill the audio buffer - let renderAudio() fill it as data arrives
 }
 
@@ -92,11 +95,27 @@ void Synthesizer::initializeImpulseResponse(
         }
     }
 
-    const unsigned int sampleCount = std::min(10000U, clippedLength);
+    // Capping the IR length is a large CPU win for realtime audio.
+    // Naive FIR is O(N) per output sample; even with future FFT partitioning,
+    // keeping this reasonable helps latency and cache behavior.
+    constexpr unsigned int kMaxIrSamples = 4096U;
+    const unsigned int sampleCount = std::min(kMaxIrSamples, clippedLength);
+
     m_filters[index].convolution.initialize(sampleCount);
     for (unsigned int i = 0; i < sampleCount; ++i) {
         m_filters[index].convolution.getImpulseResponse()[i] =
             volume * impulseResponse[i] / INT16_MAX;
+    }
+
+    // Low-risk optimization: use a single convolver on the mixed signal.
+    // We mirror the IR from the first channel.
+    if (index == 0) {
+        m_masterConvolution.destroy();
+        m_masterConvolution.initialize(sampleCount);
+        std::memcpy(
+            m_masterConvolution.getImpulseResponse(),
+            m_filters[0].convolution.getImpulseResponse(),
+            sizeof(float) * sampleCount);
     }
 }
 
@@ -127,6 +146,8 @@ void Synthesizer::destroy() {
         m_inputChannels[i].data.destroy();
         m_filters[i].convolution.destroy();
     }
+
+    m_masterConvolution.destroy();
 
     delete[] m_inputChannels;
     delete[] m_filters;
@@ -322,7 +343,7 @@ int16_t Synthesizer::renderAudio(int inputSample) {
     const float dF_F_mix = m_audioParameters.dF_F_mix;
     const float convAmount = m_audioParameters.convolution;
 
-    float signal = 0;
+    float signal_dry = 0;
     for (int i = 0; i < m_inputChannelCount; ++i) {
         const float r_0 = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
 
@@ -347,11 +368,15 @@ int16_t Synthesizer::renderAudio(int inputSample) {
             v_in = 0;
         }
 
-        const float v =
-            convAmount * m_filters[i].convolution.f(v_in)
-            + (1 - convAmount) * v_in;
+        signal_dry += v_in;
+    }
 
-        signal += v;
+    // Apply convolution once after mixing. If the master convolver isn't
+    // initialized yet, fall back to the dry signal.
+    float signal = signal_dry;
+    if (convAmount > 0.0f && m_masterConvolution.getSampleCount() > 0) {
+        const float wet = m_masterConvolution.f(signal_dry);
+        signal = convAmount * wet + (1.0f - convAmount) * signal_dry;
     }
 
     signal = m_antialiasing.fast_f(signal);

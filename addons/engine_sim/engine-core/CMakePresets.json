@@ -1,0 +1,43 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "macos-arm64-release",
+      "displayName": "macOS arm64 Release",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/macos-arm64-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64"
+      }
+    },
+    {
+      "name": "macos-arm64-relwithdebinfo-signpost",
+      "displayName": "macOS arm64 RelWithDebInfo (Signposts)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/macos-arm64-relwithdebinfo-signpost",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "ENGINE_SIM_ENABLE_SIGNPOST": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-arm64-release",
+      "configurePreset": "macos-arm64-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "macos-arm64-relwithdebinfo-signpost",
+      "configurePreset": "macos-arm64-relwithdebinfo-signpost",
+      "configuration": "RelWithDebInfo"
+    }
+  ]
+}

@@ -6,6 +6,9 @@
 #include "engine_sim.h"
 #include "piranha.h"
 
+#include <filesystem>
+#include <ostream>
+#include <string>
 #include <vector>
 
 namespace es_script {
@@ -38,12 +41,16 @@ namespace es_script {
         void destroy();
 
     private:
-        void printError(const piranha::CompilationError *err, std::ofstream &file) const;
+        void printError(const piranha::CompilationError *err, std::ostream &out) const;
+
+        void addSearchPathOnce(const std::string &path);
 
     private:
         LanguageRules m_rules;
         piranha::Compiler *m_compiler;
         piranha::NodeProgram m_program;
+
+        std::vector<std::string> m_dynamicSearchPaths;
     };
 
 } /* namespace es_script */

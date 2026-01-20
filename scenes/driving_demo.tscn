@@ -4,5 +4,3 @@
 
 [node name="DrivingDemo" type="Node" unique_id=118224974]
 script = ExtResource("1")
-script_path = null
-auto_start = null

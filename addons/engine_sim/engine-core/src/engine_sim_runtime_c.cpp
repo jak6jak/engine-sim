@@ -281,9 +281,8 @@ bool es_runtime_load_script(es_runtime_t *rt, const char *script_path) {
     // Create simulator (full engine simulation) + synthesizer
     auto *sim = new PistonEngineSimulator;
     sim->initialize(sim_params);
-    // Use 10kHz instead of engine's default for performance
-    // Original engines may request 20kHz+ but that's too slow for real-time
-    sim->setSimulationFrequency(10000);
+    // Use engine's simulation_frequency from script (typically 8000-10000 for performance)
+    sim->setSimulationFrequency(engine->getSimulationFrequency());
     sim->loadSimulation(engine, vehicle, transmission);
     sim->setFluidSimulationSteps(2);  // Reduced from 8 for performance
 
@@ -422,6 +421,11 @@ void es_runtime_wait_audio_processed(es_runtime_t *rt) {
 double es_runtime_get_engine_speed(es_runtime_t *rt) {
     if (rt == nullptr || rt->simulator == nullptr) return 0.0;
     return rt->simulator->filteredEngineSpeed();
+}
+
+double es_runtime_get_engine_speed_raw(es_runtime_t *rt) {
+    if (rt == nullptr || rt->engine == nullptr) return 0.0;
+    return rt->engine->getRpm();
 }
 
 void es_runtime_set_simulation_speed(es_runtime_t *rt, double speed) {

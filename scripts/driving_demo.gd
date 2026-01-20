@@ -46,8 +46,8 @@ var clutch_target: float = 1.0
 const CLUTCH_ENGAGE_SPEED := 3.0  # How fast clutch engages per second
 
 # ===== Throttle =====
-var throttle: float = 0.0  # 0.0 = closed, 1.0 = full (for HUD display)
-var speed_control: float = 0.1  # 0.1=near idle, 1.0=full throttle (for engine-sim API)
+var throttle: float = 0.5  # 0.0 = closed, 1.0 = full (for HUD display)
+var speed_control: float = 1.0 # 0.1=near idle, 1.0=full throttle (for engine-sim API)
 const THROTTLE_RESPONSE := 1.0  # How fast throttle responds per second
 
 # ===== Vehicle Physics (simplified) =====

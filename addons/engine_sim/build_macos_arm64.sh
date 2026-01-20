@@ -8,6 +8,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Release by default (better for profiling / performance testing)
+TARGET="${1:-template_release}"
+
 ENGINE_SIM_BUILD_DIR="${ENGINE_SIM_BUILD_DIR:-$SCRIPT_DIR/../../../build}"
 export ENGINE_SIM_BUILD_DIR
 
@@ -31,11 +34,8 @@ fi
 # Build godot-cpp if its static library isn't present yet.
 if ! ls "$GODOT_CPP_PATH"/bin/libgodot-cpp*.a >/dev/null 2>&1; then
 	echo "Building godot-cpp..." >&2
-	scons -C "$GODOT_CPP_PATH" platform=macos arch=arm64 target=template_debug
+	scons -C "$GODOT_CPP_PATH" platform=macos arch=arm64 target="$TARGET"
 fi
-
-# Debug by default
-TARGET="${1:-template_debug}"
 
 scons platform=macos arch=arm64 target="$TARGET"
 

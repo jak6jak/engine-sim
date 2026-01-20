@@ -15,6 +15,10 @@ option(PIRANHA_ENABLED "Enable scripting input" ON)
 option(DISCORD_ENABLED "Enable Discord Rich Presence" ON)
 option(DELTA_STUDIO_ENABLED "Enable delta-studio app (engine-sim-app)" OFF)
 
+# Perf / profiling toggles (compile-time)
+option(ENGINE_SIM_ENABLE_STEP_TIMING "Enable simple per-step timing prints" OFF)
+option(ENGINE_SIM_ENABLE_SIGNPOST "Enable macOS Instruments signposts (Points of Interest)" OFF)
+
 if (DTV)
     add_compile_definitions(ATG_ENGINE_SIM_VIDEO_CAPTURE)
 endif (DTV)
@@ -181,6 +185,14 @@ add_library(engine-sim STATIC
 )
 
 set_target_properties(engine-sim PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (ENGINE_SIM_ENABLE_STEP_TIMING)
+    target_compile_definitions(engine-sim PRIVATE ENGINE_SIM_ENABLE_STEP_TIMING=1)
+endif()
+
+if (ENGINE_SIM_ENABLE_SIGNPOST)
+    target_compile_definitions(engine-sim PRIVATE ENGINE_SIM_ENABLE_SIGNPOST=1)
+endif()
 
 target_link_libraries(engine-sim
     simple-2d-constraint-solver
@@ -377,6 +389,7 @@ add_executable(engine-sim-test
     # Source files
     test/gas_system_tests.cpp
     test/function_test.cpp
+    test/script_compile_tests.cpp
     test/synthesizer_tests.cpp
     test/profile_sim.cpp
 )

@@ -1,4 +1,14 @@
 #include "../include/simulator.h"
+#include "../dependencies/submodules/simple-2d-constraint-solver/include/gauss_seidel_sle_solver.h"
+
+#ifndef ENGINE_SIM_ENABLE_SIGNPOST
+#define ENGINE_SIM_ENABLE_SIGNPOST 0
+#endif
+
+#if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+#include <os/signpost.h>
+static os_log_t s_engineSimPerfLog = os_log_create("engine-sim", "perf");
+#endif
 
 Simulator::Simulator() {
     m_engine = nullptr;
@@ -29,8 +39,10 @@ void Simulator::initialize(const Parameters &params) {
     if (params.systemType == SystemType::NsvOptimized) {
         atg_scs::OptimizedNsvRigidBodySystem *system =
             new atg_scs::OptimizedNsvRigidBodySystem;
-        system->initialize(
-            new atg_scs::GaussSeidelSleSolver);
+        atg_scs::GaussSeidelSleSolver *solver = new atg_scs::GaussSeidelSleSolver;
+        solver->m_maxIterations = 32;  // Balanced: enough iterations for convergence
+        solver->m_minDelta = 0.1;      // Default threshold
+        system->initialize(solver);
         m_system = system;
     }
     else {
@@ -90,8 +102,18 @@ void Simulator::startFrame(double dt) {
 }
 
 // Timing for performance monitoring (simplified)
+#ifndef ENGINE_SIM_ENABLE_STEP_TIMING
+#define ENGINE_SIM_ENABLE_STEP_TIMING 1  // Enabled for profiling
+#endif
+
+#if ENGINE_SIM_ENABLE_STEP_TIMING
 static long long s_totalStepTimeNs = 0;
+static long long s_physicsTimeNs = 0;
+static long long s_updateTimeNs = 0;
+static long long s_simStepTimeNs = 0;
+static long long s_synthTimeNs = 0;
 static int s_profileSteps = 0;
+#endif
 
 bool Simulator::simulateStep() {
     if (getCurrentIteration() >= simulationSteps()) {
@@ -101,28 +123,76 @@ bool Simulator::simulateStep() {
             std::chrono::duration_cast<std::chrono::microseconds>(s1 - m_simulationStart).count();
         m_physicsProcessingTime = m_physicsProcessingTime * 0.98 + 0.02 * lastFrame;
 
-        // Print simple timing every 20000 steps
+        #if ENGINE_SIM_ENABLE_STEP_TIMING
+        // Print detailed timing every 20000 steps
         if (s_profileSteps >= 20000) {
-            double usPerStep = (s_totalStepTimeNs / 1000.0) / s_profileSteps;
-            double maxStepsPerSec = 1000000.0 / usPerStep;
-            std::fprintf(stderr, "engine-sim[perf]: %.1fus/step (max %.0f steps/sec)\n", usPerStep, maxStepsPerSec);
+            const double usPerStep = (s_totalStepTimeNs / 1000.0) / s_profileSteps;
+            const double physicsUs = (s_physicsTimeNs / 1000.0) / s_profileSteps;
+            const double updateUs = (s_updateTimeNs / 1000.0) / s_profileSteps;
+            const double simStepUs = (s_simStepTimeNs / 1000.0) / s_profileSteps;
+            const double synthUs = (s_synthTimeNs / 1000.0) / s_profileSteps;
+            const double maxStepsPerSec = 1000000.0 / usPerStep;
+            std::fprintf(stderr, "engine-sim[perf]: %.1fus/step (max %.0f/s) | physics=%.1fus update=%.1fus simStep=%.1fus synth=%.1fus\n", 
+                usPerStep, maxStepsPerSec, physicsUs, updateUs, simStepUs, synthUs);
             s_totalStepTimeNs = 0;
+            s_physicsTimeNs = 0;
+            s_updateTimeNs = 0;
+            s_simStepTimeNs = 0;
+            s_synthTimeNs = 0;
             s_profileSteps = 0;
         }
+        #endif
 
         return false;
     }
 
-    auto t0 = std::chrono::steady_clock::now();
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    const os_signpost_id_t sp_step = os_signpost_id_make_with_pointer(s_engineSimPerfLog, this);
+    const os_signpost_id_t sp_process = os_signpost_id_generate(s_engineSimPerfLog);
+    const os_signpost_id_t sp_update = os_signpost_id_generate(s_engineSimPerfLog);
+    const os_signpost_id_t sp_dyno = os_signpost_id_generate(s_engineSimPerfLog);
+    const os_signpost_id_t sp_sim_and_synth = os_signpost_id_generate(s_engineSimPerfLog);
+
+    os_signpost_interval_begin(s_engineSimPerfLog, sp_step, "Simulator::simulateStep");
+    #endif
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t0 = std::chrono::steady_clock::now();
+    #endif
 
     const double timestep = getTimestep();
-    m_system->process(timestep, 1);
 
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_begin(s_engineSimPerfLog, sp_process, "physics::process");
+    #endif
+    m_system->process(timestep, 1);
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_end(s_engineSimPerfLog, sp_process, "physics::process");
+    #endif
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t1_physics = std::chrono::steady_clock::now();
+    s_physicsTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1_physics - t0).count();
+    #endif
+
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_begin(s_engineSimPerfLog, sp_update, "entities::update");
+    #endif
     m_engine->update(timestep);
     m_vehicle->update(timestep);
     m_transmission->update(timestep);
 
     updateFilteredEngineSpeed(timestep);
+
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_end(s_engineSimPerfLog, sp_update, "entities::update");
+    os_signpost_interval_begin(s_engineSimPerfLog, sp_dyno, "dyno::sample");
+    #endif
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t2_update = std::chrono::steady_clock::now();
+    s_updateTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t2_update - t1_physics).count();
+    #endif
 
     Crankshaft *outputShaft = m_engine->getOutputCrankshaft();
     outputShaft->resetAngle();
@@ -132,10 +202,13 @@ bool Simulator::simulateStep() {
         shaft->m_body.theta = outputShaft->m_body.theta;
     }
 
-    const int index =
-        static_cast<int>(std::floor(DynoTorqueSamples * outputShaft->getCycleAngle() / (4 * constants::pi)));
+    const double cycleAngle = outputShaft->getCycleAngle();
+    const int index = static_cast<int>(std::floor(
+        DynoTorqueSamples * cycleAngle / (4 * constants::pi)
+    ));
     const int step = m_engine->isSpinningCw() ? 1 : -1;
-    m_dynoTorqueSamples[index] = m_dyno.getTorque();
+    const double torque = m_dyno.getTorque();
+    m_dynoTorqueSamples[index] = torque;
 
     if (m_lastDynoTorqueSample != index) {
         for (int i = m_lastDynoTorqueSample + step; i != index; i += step) {
@@ -148,18 +221,45 @@ bool Simulator::simulateStep() {
                 continue;
             }
 
-            m_dynoTorqueSamples[i] = m_dyno.getTorque();
+            m_dynoTorqueSamples[i] = torque;
         }
 
         m_lastDynoTorqueSample = index;
     }
 
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_end(s_engineSimPerfLog, sp_dyno, "dyno::sample");
+    os_signpost_interval_begin(s_engineSimPerfLog, sp_sim_and_synth, "simulateStep_+synth");
+    #endif
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t3_dyno = std::chrono::steady_clock::now();
+    #endif
+
     simulateStep_();
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t4_simstep = std::chrono::steady_clock::now();
+    s_simStepTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t4_simstep - t3_dyno).count();
+    #endif
+
     writeToSynthesizer();
 
-    auto t1 = std::chrono::steady_clock::now();
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t5_synth = std::chrono::steady_clock::now();
+    s_synthTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t5_synth - t4_simstep).count();
+    #endif
+
+    #if ENGINE_SIM_ENABLE_SIGNPOST && defined(__APPLE__)
+    os_signpost_interval_end(s_engineSimPerfLog, sp_sim_and_synth, "simulateStep_+synth");
+    os_signpost_interval_end(s_engineSimPerfLog, sp_step, "Simulator::simulateStep");
+    #endif
+
+    #if ENGINE_SIM_ENABLE_STEP_TIMING
+    const auto t1 = std::chrono::steady_clock::now();
     s_totalStepTimeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     ++s_profileSteps;
+    #endif
 
     ++m_currentIteration;
     return true;

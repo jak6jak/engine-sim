@@ -12,17 +12,29 @@ It links against the static libraries produced by this repo’s CMake build (not
 
 ## 2) Build engine-sim runtime (CMake)
 
-From the repo root:
+From the repo root (recommended: Release + arm64 for profiling):
 
-- `cmake -S . -B build`
-- `cmake --build build --target engine-sim-runtime -j 8`
+- `cd addons/engine_sim/engine-core`
+- `cmake --preset macos-arm64-release`
+- `cmake --build --preset macos-arm64-release -j 8`
+
+Or without presets:
+
+- `cmake -S addons/engine_sim/engine-core -B addons/engine_sim/engine-core/build/macos-arm64-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64`
+- `cmake --build addons/engine_sim/engine-core/build/macos-arm64-release -j 8`
 
 You should have:
 - `build/libengine-sim-runtime.a`
 
+For profiling inside the Godot editor with macOS Instruments signpost markers, use the signpost preset:
+
+- `cd addons/engine_sim/engine-core`
+- `cmake --preset macos-arm64-relwithdebinfo-signpost`
+- `cmake --build --preset macos-arm64-relwithdebinfo-signpost -j 8`
+
 ## 3) Get and build godot-cpp
 
-From `godot-demo/addons/engine_sim`:
+From `addons/engine_sim`:
 
 - `git clone https://github.com/godotengine/godot-cpp.git`
 - `cd godot-cpp && git submodule update --init --recursive`
@@ -35,20 +47,33 @@ Build godot-cpp (macOS arm64):
 
 ## 4) Build the extension
 
-From `godot-demo/addons/engine_sim`:
+From `addons/engine_sim`:
 
-- Debug: `scons platform=macos arch=arm64 target=template_debug`
-- Release: `scons platform=macos arch=arm64 target=template_release`
+- Debug: `scons platform=macos arch=arm64 target=template_debug engine_sim_build_dir=engine-core/build/macos-arm64-release`
+- Release: `scons platform=macos arch=arm64 target=template_release engine_sim_build_dir=engine-core/build/macos-arm64-release`
 
-Or use the helper script:
+If you're running the game inside the Godot editor, Godot will typically load the **debug** library variant.
+For profiling inside the editor, build an optimized debug variant:
 
-- `chmod +x ./build_macos_arm64.sh`
-- Debug: `./build_macos_arm64.sh template_debug`
-- Release: `./build_macos_arm64.sh template_release`
+- Editor profiling: `scons platform=macos arch=arm64 target=template_debug optimize=yes engine_sim_build_dir=engine-core/build/macos-arm64-release`
 
-If your engine-sim build dir is not `../../../build`, set:
+If you built engine-core with the signpost preset, point the extension at that build dir instead:
 
-- `ENGINE_SIM_BUILD_DIR=/absolute/path/to/engine-sim/build`
+- Editor profiling (signposts): `scons platform=macos arch=arm64 target=template_debug optimize=yes engine_sim_build_dir=engine-core/build/macos-arm64-relwithdebinfo-signpost`
+
+For lightweight step timing prints during profiling, add:
+
+- `perf=yes`
+
+Note: `perf=yes` is a GDExtension build flag; engine-core timing/signposts are controlled via CMake options/presets.
+
+### Recording with `xctrace` (optional)
+
+If you want to record from the command line, prefer the `os_signpost` instrument (it reliably captures the `engine-sim` signposts):
+
+- `xcrun xctrace record --template "Time Profiler" --instrument os_signpost --time-limit 20s --launch -- /path/to/godot.macos.editor.arm64 --path "$PWD" --scene "res://scenes/demo.tscn"`
+
+Note: `--quit-after` counts iterations/frames, not seconds.
 
 ## 5) Run
 

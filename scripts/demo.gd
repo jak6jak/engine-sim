@@ -2,10 +2,10 @@ extends Node
 
 var runtime: Node
 
-var starter_time_left := 2.5  # Longer starter time
+var starter_time_left := 8.0  # Longer starter time for slow-cranking diesel engines
 
 @export var script_path := "res://assets/main.mr"
-@export var speed_control := 0.1  # Start near idle
+@export var speed_control := 1.0  # Full throttle helps diesel catch
 @export var throttle_sensitivity := 2.0  # How fast throttle responds per second
 
 func _ready() -> void:
@@ -20,6 +20,10 @@ func _ready() -> void:
 	if not ok:
 		push_error("Failed to load script: %s" % script_to_load)
 
+	# Set neutral gear and disengage clutch (same as test)
+	runtime.set_gear(-1)  # Neutral
+	runtime.set_clutch_pressure(0.0)  # Clutch disengaged
+	
 	runtime.set_speed_control(speed_control)
 	runtime.set_ignition_enabled(true)  # Enable spark plugs!
 	runtime.set_starter_enabled(true)
@@ -47,6 +51,11 @@ func _process(delta: float) -> void:
 			runtime.set_starter_enabled(false)
 			print("Starter disabled")
 
+	# Log RPM periodically
+	var rpm = runtime.get_engine_speed()
+	if Engine.get_frames_drawn() % 60 == 0:
+		print("RPM: %.1f  speed_control: %.2f" % [rpm, speed_control])
+
 	# Control throttle with arrow keys
 	var throttle_input := 0.0
 	if Input.is_action_pressed("ui_up"):
@@ -60,5 +69,5 @@ func _process(delta: float) -> void:
 
 	# Optional: display current RPM
 	if Input.is_action_just_pressed("ui_select"):
-		var rpm = runtime.get_engine_speed()
+		rpm = runtime.get_engine_speed()
 		print("Engine speed: %.1f RPM" % rpm)

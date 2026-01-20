@@ -236,3 +236,11 @@ public node add_gear {
 public node set_transmission => __engine_sim__set_transmission {
     input transmission [transmission];
 }
+
+    // Compatibility helper for some external/downloaded scripts.
+    // Equivalent to calling set_engine(), set_transmission(), set_vehicle().
+    public node run => __engine_sim__run {
+        input engine;
+        input transmission;
+        input vehicle;
+    }

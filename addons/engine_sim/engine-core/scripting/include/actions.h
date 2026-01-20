@@ -41,6 +41,44 @@ namespace es_script {
         piranha::pNodeInput m_engineInput = nullptr;
     };
 
+    // Compatibility helper for external scripts.
+    // Equivalent to calling set_engine(), set_transmission(), set_vehicle().
+    class RunNode : public piranha::Node {
+    public:
+        RunNode() { /* void */ }
+        virtual ~RunNode() { /* void */ }
+
+    protected:
+        virtual void registerInputs() override {
+            registerInput(&m_engineInput, "engine");
+            registerInput(&m_transmissionInput, "transmission");
+            registerInput(&m_vehicleInput, "vehicle");
+        }
+
+        virtual void _evaluate() override {
+            EngineNode *engineNode = getObject<EngineNode>(m_engineInput);
+            TransmissionNode *transmissionNode = getObject<TransmissionNode>(m_transmissionInput);
+            VehicleNode *vehicleNode = getObject<VehicleNode>(m_vehicleInput);
+
+            Engine *engine = new Engine;
+            engineNode->buildEngine(engine);
+            Compiler::output()->engine = engine;
+
+            Transmission *transmission = new Transmission;
+            transmissionNode->generate(transmission);
+            Compiler::output()->transmission = transmission;
+
+            Vehicle *vehicle = new Vehicle;
+            vehicleNode->generate(vehicle);
+            Compiler::output()->vehicle = vehicle;
+        }
+
+    protected:
+        piranha::pNodeInput m_engineInput = nullptr;
+        piranha::pNodeInput m_transmissionInput = nullptr;
+        piranha::pNodeInput m_vehicleInput = nullptr;
+    };
+
     class AddRodJournalNode : public Node {
     public:
         AddRodJournalNode() { /* void */ }

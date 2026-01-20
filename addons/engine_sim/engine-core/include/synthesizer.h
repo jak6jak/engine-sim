@@ -121,6 +121,10 @@ class Synthesizer {
 
         ProcessingFilters *m_filters;
 
+        // Low-risk optimization: apply convolution once on the mixed signal
+        // instead of per input channel.
+        ConvolutionFilter m_masterConvolution;
+
 };
 
 #endif /* ATG_ENGINE_SIM_ENGINE_SYNTHESIZER_H */
