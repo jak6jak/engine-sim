@@ -1,5 +1,6 @@
 #include "../include/simulator.h"
 #include "../dependencies/submodules/simple-2d-constraint-solver/include/gauss_seidel_sle_solver.h"
+#include "../dependencies/submodules/simple-2d-constraint-solver/include/cholesky_sle_solver.h"
 
 #ifndef ENGINE_SIM_ENABLE_SIGNPOST
 #define ENGINE_SIM_ENABLE_SIGNPOST 0
@@ -40,8 +41,8 @@ void Simulator::initialize(const Parameters &params) {
         atg_scs::OptimizedNsvRigidBodySystem *system =
             new atg_scs::OptimizedNsvRigidBodySystem;
         atg_scs::GaussSeidelSleSolver *solver = new atg_scs::GaussSeidelSleSolver;
-        solver->m_maxIterations = 32;  // Balanced: enough iterations for convergence
-        solver->m_minDelta = 0.1;      // Default threshold
+        solver->m_maxIterations = 32;
+        solver->m_minDelta = 0.1;
         system->initialize(solver);
         m_system = system;
     }
@@ -49,7 +50,7 @@ void Simulator::initialize(const Parameters &params) {
         atg_scs::GenericRigidBodySystem *system =
             new atg_scs::GenericRigidBodySystem;
         system->initialize(
-            new atg_scs::GaussianEliminationSleSolver,
+            new atg_scs::CholeskySleSolver,
             new atg_scs::NsvOdeSolver);
         m_system = system;
     }
