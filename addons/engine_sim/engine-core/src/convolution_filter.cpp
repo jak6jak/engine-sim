@@ -3,6 +3,11 @@
 #include <assert.h>
 #include <string.h>
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#define USE_NEON 1
+#endif
+
 ConvolutionFilter::ConvolutionFilter() {
     m_shiftRegister = nullptr;
     m_impulseResponse = nullptr;
@@ -39,11 +44,46 @@ float ConvolutionFilter::f(float sample) {
 
     float result = 0;
 
-    // Optimized convolution with loop unrolling by 4
+#if USE_NEON
+    // NEON SIMD: process 4 floats at a time
+    float32x4_t sum_vec = vdupq_n_f32(0.0f);
+    
+    // First segment: from m_shiftOffset to end (no wraparound)
+    const int firstLoopEnd = m_sampleCount - m_shiftOffset;
+    const float* ir = m_impulseResponse;
+    const float* sr = m_shiftRegister + m_shiftOffset;
+    
+    int i = 0;
+    for (; i + 4 <= firstLoopEnd; i += 4) {
+        float32x4_t ir_vec = vld1q_f32(ir + i);
+        float32x4_t sr_vec = vld1q_f32(sr + i);
+        sum_vec = vmlaq_f32(sum_vec, ir_vec, sr_vec);
+    }
+    
+    // Second segment: wraparound from beginning
+    const float* sr2 = m_shiftRegister;
+    for (; i + 4 <= m_sampleCount; i += 4) {
+        float32x4_t ir_vec = vld1q_f32(ir + i);
+        float32x4_t sr_vec = vld1q_f32(sr2 + (i - firstLoopEnd));
+        sum_vec = vmlaq_f32(sum_vec, ir_vec, sr_vec);
+    }
+    
+    // Horizontal sum of NEON vector
+    result = vaddvq_f32(sum_vec);
+    
+    // Handle remaining samples (scalar)
+    for (; i < firstLoopEnd; ++i) {
+        result += ir[i] * sr[i];
+    }
+    for (; i < m_sampleCount; ++i) {
+        result += ir[i] * sr2[i - firstLoopEnd];
+    }
+    
+#else
+    // Scalar fallback with loop unrolling
     const int firstLoopEnd = m_sampleCount - m_shiftOffset;
     const int unroll = 4;
 
-    // First segment: no wraparound needed
     int i = 0;
     for (; i + unroll <= firstLoopEnd; i += unroll) {
         result += m_impulseResponse[i] * m_shiftRegister[i + m_shiftOffset];
@@ -51,13 +91,10 @@ float ConvolutionFilter::f(float sample) {
         result += m_impulseResponse[i+2] * m_shiftRegister[i+2 + m_shiftOffset];
         result += m_impulseResponse[i+3] * m_shiftRegister[i+3 + m_shiftOffset];
     }
-    // Remaining samples in first segment
     for (; i < firstLoopEnd; ++i) {
         result += m_impulseResponse[i] * m_shiftRegister[i + m_shiftOffset];
     }
 
-    // Second segment: wraparound (typically short for 4000-sample IR)
-    const int wrapBase = i - (m_sampleCount - m_shiftOffset);
     for (; i + unroll <= m_sampleCount; i += unroll) {
         const int base = i - (m_sampleCount - m_shiftOffset);
         result += m_impulseResponse[i] * m_shiftRegister[base];
@@ -65,12 +102,12 @@ float ConvolutionFilter::f(float sample) {
         result += m_impulseResponse[i+2] * m_shiftRegister[base+2];
         result += m_impulseResponse[i+3] * m_shiftRegister[base+3];
     }
-    // Remaining samples in second segment
     for (; i < m_sampleCount; ++i) {
         result += m_impulseResponse[i] * m_shiftRegister[i - (m_sampleCount - m_shiftOffset)];
     }
+#endif
 
-    // Replace expensive modulo with conditional (much faster)
+    // Replace expensive modulo with conditional
     if (--m_shiftOffset < 0) {
         m_shiftOffset = m_sampleCount - 1;
     }
