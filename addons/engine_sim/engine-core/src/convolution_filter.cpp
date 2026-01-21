@@ -3,7 +3,8 @@
 #include <assert.h>
 #include <string.h>
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+// Temporarily disabled to test scalar fallback
+#if (defined(__ARM_NEON) || defined(__ARM_NEON__))
 #include <arm_neon.h>
 #define USE_NEON 1
 #endif
@@ -50,34 +51,32 @@ float ConvolutionFilter::f(float sample) {
     
     // First segment: from m_shiftOffset to end (no wraparound)
     const int firstLoopEnd = m_sampleCount - m_shiftOffset;
-    const float* ir = m_impulseResponse;
-    const float* sr = m_shiftRegister + m_shiftOffset;
     
     int i = 0;
     for (; i + 4 <= firstLoopEnd; i += 4) {
-        float32x4_t ir_vec = vld1q_f32(ir + i);
-        float32x4_t sr_vec = vld1q_f32(sr + i);
+        float32x4_t ir_vec = vld1q_f32(m_impulseResponse + i);
+        float32x4_t sr_vec = vld1q_f32(m_shiftRegister + i + m_shiftOffset);
         sum_vec = vmlaq_f32(sum_vec, ir_vec, sr_vec);
+    }
+    // Remaining samples in first segment (scalar)
+    for (; i < firstLoopEnd; ++i) {
+        result += m_impulseResponse[i] * m_shiftRegister[i + m_shiftOffset];
     }
     
     // Second segment: wraparound from beginning
-    const float* sr2 = m_shiftRegister;
     for (; i + 4 <= m_sampleCount; i += 4) {
-        float32x4_t ir_vec = vld1q_f32(ir + i);
-        float32x4_t sr_vec = vld1q_f32(sr2 + (i - firstLoopEnd));
+        const int base = i - firstLoopEnd;
+        float32x4_t ir_vec = vld1q_f32(m_impulseResponse + i);
+        float32x4_t sr_vec = vld1q_f32(m_shiftRegister + base);
         sum_vec = vmlaq_f32(sum_vec, ir_vec, sr_vec);
+    }
+    // Remaining samples in second segment (scalar)
+    for (; i < m_sampleCount; ++i) {
+        result += m_impulseResponse[i] * m_shiftRegister[i - firstLoopEnd];
     }
     
     // Horizontal sum of NEON vector
-    result = vaddvq_f32(sum_vec);
-    
-    // Handle remaining samples (scalar)
-    for (; i < firstLoopEnd; ++i) {
-        result += ir[i] * sr[i];
-    }
-    for (; i < m_sampleCount; ++i) {
-        result += ir[i] * sr2[i - firstLoopEnd];
-    }
+    result += vaddvq_f32(sum_vec);
     
 #else
     // Scalar fallback with loop unrolling

@@ -234,7 +234,7 @@ public node eng {
         jitter: 1,
         noise: 1,
         hf_gain: 0.03,
-        simulation_frequency: 8000,
+        simulation_frequency: 4500,
         dyno_min_speed: 500 * units.rpm
     )
 

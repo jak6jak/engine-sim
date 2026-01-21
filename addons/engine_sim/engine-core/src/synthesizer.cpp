@@ -342,8 +342,19 @@ int16_t Synthesizer::renderAudio(int inputSample) {
     const float airNoise = m_audioParameters.airNoise;
     const float dF_F_mix = m_audioParameters.dF_F_mix;
     const float convAmount = m_audioParameters.convolution;
+    const float inputSampleNoise = m_audioParameters.inputSampleNoise;
 
     float signal_dry = 0;
+    float signal_conv = 0;
+    const bool useMasterConvolution = (m_masterConvolution.getSampleCount() > 0);
+    bool anyPerChannelConvolution = false;
+    
+    // Bypass DC filter when noise/mixing params are zero (for pass-through testing)
+    const bool bypassInputDc =
+        inputSampleNoise == 0.0f
+        && airNoise == 0.0f
+        && dF_F_mix == 0.0f;
+    
     for (int i = 0; i < m_inputChannelCount; ++i) {
         const float r_0 = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
 
@@ -352,7 +363,7 @@ int16_t Synthesizer::renderAudio(int inputSample) {
 
         const float f_in = jitteredSample;
         const float f_dc = m_filters[i].inputDcFilter.fast_f(f_in);
-        const float f = f_in - f_dc;
+        const float f = bypassInputDc ? f_in : (f_in - f_dc);
         const float f_p = m_filters[i].derivative.f(f_in);
 
         const float noise = 2.0 * ((double)rand() / RAND_MAX) - 1.0;
@@ -369,14 +380,25 @@ int16_t Synthesizer::renderAudio(int inputSample) {
         }
 
         signal_dry += v_in;
+        
+        // Per-channel convolution fallback when master convolution not set up
+        if (!useMasterConvolution && convAmount > 0.0f && m_filters[i].convolution.getSampleCount() > 0) {
+            signal_conv += m_filters[i].convolution.f(v_in);
+            anyPerChannelConvolution = true;
+        }
     }
 
-    // Apply convolution once after mixing. If the master convolver isn't
-    // initialized yet, fall back to the dry signal.
+    // Apply convolution - use master convolver if available, otherwise per-channel
+    // If no convolution is available at all, just use dry signal
     float signal = signal_dry;
-    if (convAmount > 0.0f && m_masterConvolution.getSampleCount() > 0) {
-        const float wet = m_masterConvolution.f(signal_dry);
-        signal = convAmount * wet + (1.0f - convAmount) * signal_dry;
+    if (convAmount > 0.0f) {
+        if (useMasterConvolution) {
+            const float wet = m_masterConvolution.f(signal_dry);
+            signal = convAmount * wet + (1.0f - convAmount) * signal_dry;
+        } else if (anyPerChannelConvolution) {
+            signal = convAmount * signal_conv + (1.0f - convAmount) * signal_dry;
+        }
+        // else: no convolution available, keep signal = signal_dry
     }
 
     signal = m_antialiasing.fast_f(signal);

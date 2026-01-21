@@ -1,6 +1,3 @@
-[submodule "dependencies/submodules/delta-studio"]
-	path = addons/engine_sim/engine-core/dependencies/submodules/delta-studio
-	url = https://github.com/ange-yaghi/delta-studio
 [submodule "dependencies/submodules/simple-2d-constraint-solver"]
 	path = addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver
 	url = https://github.com/ange-yaghi/simple-2d-constraint-solver
@@ -22,9 +19,6 @@
 [submodule "addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver"]
 	path = addons/engine_sim/engine-core/dependencies/submodules/simple-2d-constraint-solver
 	url = https://github.com/ange-yaghi/simple-2d-constraint-solver
-[submodule "addons/engine_sim/engine-core/dependencies/submodules/delta-studio"]
-	path = addons/engine_sim/engine-core/dependencies/submodules/delta-studio
-	url = https://github.com/ange-yaghi/delta-studio
 [submodule "addons/engine_sim/engine-core/dependencies/submodules/direct-to-video"]
 	path = addons/engine_sim/engine-core/dependencies/submodules/direct-to-video
 	url = https://github.com/ange-yaghi/direct-to-video
