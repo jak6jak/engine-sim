@@ -2,7 +2,6 @@
 
 #include "../include/gas_system.h"
 #include "../include/units.h"
-#include "../include/csv_io.h"
 
 #include <sstream>
 
@@ -199,10 +198,6 @@ TEST(GasSystemTests, PowerStrokeTest) {
 }
 
 TEST(GasSystemTests, IntakeStrokeTest) {
-    atg_csv::CsvData csv;
-    csv.initialize();
-    csv.m_columns = 3;
-
     GasSystem system1, system2;
     system1.initialize(
         units::pressure(1.0, units::atm),
@@ -214,10 +209,6 @@ TEST(GasSystemTests, IntakeStrokeTest) {
         units::volume(1.0, units::m3),
         units::celcius(25.0)
     );
-
-    csv.write("t");
-    csv.write("n");
-    csv.write("theoretical");
 
     constexpr double dV = units::volume(4.0, units::m3);
     constexpr double dt = 0.01;
@@ -236,17 +227,7 @@ TEST(GasSystemTests, IntakeStrokeTest) {
         GasSystem::flow(flowParams);
         //system2.changeVolume(dV * dt);
         //system2.changeTemperature(units::celcius(25.0) - system2.temperature());
-
-        csv.write(std::to_string(i * dt).c_str());
-        csv.write(std::to_string(system2.n()).c_str());
-        csv.write(std::to_string(
-            units::pressure(1.0, units::atm) * system2.volume()
-            / (constants::R * units::celcius(25.0))).c_str());
     }
-
-    csv.m_rows = 100 + 1;
-    csv.writeCsv("intake_stroke.csv");
-    csv.destroy();
 }
 
 TEST(GasSystemTests, FlowLimit) {
@@ -416,10 +397,6 @@ TEST(GasSystemTests, FlowRateConstant) {
 }
 
 TEST(GasSystemTests, GasVelocityReducesStaticPressure) {
-    atg_csv::CsvData csv;
-    csv.initialize();
-    csv.m_columns = 6;
-
     GasSystem system1, system2;
     system1.initialize(
         units::pressure(15, units::psi),
@@ -448,13 +425,6 @@ TEST(GasSystemTests, GasVelocityReducesStaticPressure) {
     params.system_0 = &system1;
     params.system_1 = &system2;
 
-    csv.write("time");
-    csv.write("P_0");
-    csv.write("P_1");
-    csv.write("v_0");
-    csv.write("v_1");
-    csv.write("total_energy");
-
     const int steps = 1000;
     for (int i = 1; i <= steps; ++i) {
         const double staticPressure =
@@ -476,13 +446,6 @@ TEST(GasSystemTests, GasVelocityReducesStaticPressure) {
         //system1.dissipateVelocity(params.dt, 0.01);
         //system2.dissipateVelocity(params.dt, 0.01);
 
-        ++csv.m_rows;
-        csv.write(std::to_string(i * params.dt).c_str());
-        csv.write(std::to_string(P_0).c_str());
-        csv.write(std::to_string(P_1).c_str());
-        csv.write(std::to_string(velocity_x_0).c_str());
-        csv.write(std::to_string(velocity_x_1).c_str());
-        csv.write(std::to_string(systemEnergy).c_str());
     }
 
     const double finalSystemEnergy = system1.totalEnergy() + system2.totalEnergy();
@@ -493,16 +456,9 @@ TEST(GasSystemTests, GasVelocityReducesStaticPressure) {
 
     EXPECT_NEAR(finalMolecules, initialMolecules, 1E-6);
     EXPECT_NEAR(finalSystemEnergy, initialSystemEnergy, 1E-4);
-
-    csv.writeCsv("gas_system_test_output.csv", nullptr, '\t');
-    csv.destroy();
 }
 
 TEST(GasSystemTests, GasVelocityProducesScavengingEffect) {
-    atg_csv::CsvData csv;
-    csv.initialize();
-    csv.m_columns = 7;
-
     constexpr double cylinderArea =
         constants::pi * units::distance(2.0, units::inch) * units::distance(2.0, units::inch);
     constexpr double tubeArea =
@@ -615,19 +571,7 @@ TEST(GasSystemTests, GasVelocityProducesScavengingEffect) {
         system2.updateVelocity(params.dt);
         system1.dissipateExcessVelocity();
         system2.dissipateExcessVelocity();
-
-        ++csv.m_rows;
-        csv.write(std::to_string(i).c_str());
-        csv.write(std::to_string(i * params.dt).c_str());
-        csv.write(std::to_string(P_0).c_str());
-        csv.write(std::to_string(P_1).c_str());
-        csv.write(std::to_string(velocity_x_0).c_str());
-        csv.write(std::to_string(velocity_x_1).c_str());
-        csv.write(std::to_string(exhaustStaticPressure).c_str());
     }
-
-    csv.writeCsv("gas_system_test_output.csv", nullptr, '\t');
-    csv.destroy();
 }
 
 TEST(GasSystemTests, GasVelocityProducesRamEffect) {

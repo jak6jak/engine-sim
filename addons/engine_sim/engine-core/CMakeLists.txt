@@ -194,8 +194,7 @@ if (ENGINE_SIM_ENABLE_SIGNPOST)
 endif()
 
 target_link_libraries(engine-sim
-    simple-2d-constraint-solver
-    csv-io)
+    simple-2d-constraint-solver)
 
 target_include_directories(engine-sim
     PUBLIC dependencies/submodules)
@@ -260,7 +259,6 @@ if (PIRANHA_ENABLED)
         PUBLIC dependencies/submodules)
 
     target_link_libraries(engine-sim-script-interpreter
-        csv-io
         piranha)
 
     target_link_libraries(engine-sim-runtime
