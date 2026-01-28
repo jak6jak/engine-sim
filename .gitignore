@@ -18,6 +18,7 @@ engine-sim-test[1]_include.cmake
 engine-sim-test[1]_tests.cmake
 
 # Godot generated files
+.godot/
 godot-demo/.godot/
 godot-cpp/
 
@@ -29,6 +30,6 @@ godot-cpp/
 # clangd cache and code completion files
 .cache
 compile_commands.json
-
+*.metal.cache
 # Blender temporary files
 *.blend1

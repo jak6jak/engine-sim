@@ -175,7 +175,7 @@ public node MAN_D0836LFL {
         hf_gain: 0.01,
         noise: 1.0,
         jitter: 0.23,
-        simulation_frequency: 10000
+        simulation_frequency: 8000
     )
 
     label stroke(125.0 * units.mm)
@@ -184,7 +184,7 @@ public node MAN_D0836LFL {
     label rod_mass(1650 * units.g)
     label compression_height(32.8 * units.mm)
     label crank_mass(29.5 * units.kg)
-    label flywheel_mass(200 * units.kg)
+    label flywheel_mass(50 * units.kg)
     label flywheel_radius(24 * units.inch)
 
     label crank_moment(
@@ -254,7 +254,7 @@ intake intake(
     intake_flow_rate: k_carb(460.0),
     runner_flow_rate: k_carb(300.0),
     runner_length: 15.0 * units.inch,
-    idle_flow_rate: k_carb(0.0),
+    idle_flow_rate: k_carb(10.0),
     idle_throttle_plate_position: 0.97
 )
 
@@ -268,7 +268,7 @@ exhaust_system_parameters es_params(
     exhaust_system exhaust0(
         es_params,
         length: 100.0 * units.inch,
-        audio_volume: 2.0,
+        audio_volume: 1.0,
         impulse_response: ir_lib.default_0)
 
     label spacing(0 * units.inch)

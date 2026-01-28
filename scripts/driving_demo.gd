@@ -63,7 +63,8 @@ var engine_running: bool = false
 var ignition_on: bool = false
 var starter_held: bool = false
 var engine_rpm: float = 0.0
-const IDLE_RPM := 800.0
+var starter_time_left := 8.0
+const IDLE_RPM := 2800.0
 const REDLINE_RPM := 7000.0
 const STALL_RPM := 400.0
 
@@ -79,6 +80,10 @@ func _ready() -> void:
 	var script_to_load := script_path
 	print("Loading engine script: ", script_to_load)
 	
+	if not FileAccess.file_exists(script_to_load):
+		push_error("Can't find script at: %s" % script_to_load)
+		return
+	
 	var ok = runtime.load_mr_script(script_to_load)
 	if not ok:
 		push_error("Failed to load script: %s" % script_to_load)
@@ -87,12 +92,12 @@ func _ready() -> void:
 	print("Engine script loaded successfully")
 	
 	# Set initial engine state BEFORE starting audio (important order!)
-	# speed_control: 0.1=near idle, 1.0=full throttle
-	runtime.set_speed_control(speed_control)  # Use class variable (0.1 = near idle)
-	runtime.set_ignition_enabled(true)  # Enable spark plugs
-	runtime.set_starter_enabled(true)  # Start cranking
+	# Must set gear and clutch FIRST, then speed_control, then ignition/starter
 	runtime.set_gear(-1)  # Start in neutral (engine-sim uses -1 for neutral)
 	runtime.set_clutch_pressure(0.0)  # Clutch disengaged for startup
+	runtime.set_speed_control(speed_control)  # Full throttle (1.0) helps diesel catch
+	runtime.set_ignition_enabled(true)  # Enable spark plugs
+	runtime.set_starter_enabled(true)  # Start cranking
 	runtime.set_audio_debug_enabled(true)
 	runtime.set_audio_debug_interval(2.0)
 	runtime.set_simulation_speed(1.1)  # 10% faster for audio buffer headroom
@@ -214,6 +219,14 @@ func _process(delta: float) -> void:
 	if runtime == null:
 		return
 	
+	# Handle starter motor timing (like demo.gd)
+	if starter_time_left > 0.0:
+		starter_time_left -= delta
+		if starter_time_left <= 0.0:
+			runtime.set_starter_enabled(false)
+			starter_held = false
+			print("Starter disabled (timeout)")
+	
 	# Update shift cooldown
 	if shift_cooldown > 0:
 		shift_cooldown -= delta
@@ -242,9 +255,12 @@ func _process(delta: float) -> void:
 	
 	# Sync clutch to engine-sim transmission
 	# In neutral (gear=0, engine-sim gear=-1), clutch is disengaged so engine idles freely
-	# In gear, clutch engages to put load on the engine
+	# In gear, clutch engages to put load on the engine, with gentle engagement in 1st gear
 	if gear == 0:
 		runtime.set_clutch_pressure(0.0)  # Neutral = clutch disengaged
+	elif gear == 1 and engine_rpm < IDLE_RPM * 1.1:
+		# When in 1st gear but RPM is barely above idle, keep clutch mostly disengaged
+		runtime.set_clutch_pressure(clutch_engaged * 0.3)  # Gentle engagement
 	else:
 		runtime.set_clutch_pressure(clutch_engaged)
 	
@@ -285,17 +301,19 @@ func _handle_input(delta: float) -> void:
 	# W/Up = increase speed_control = more throttle
 	# S/Down = decrease speed_control = less throttle
 	var throttle_dir := 0.0
-	if Input.is_action_pressed("ui_up") or Input.is_key_pressed(KEY_W):
+	if Input.is_action_pressed("ui_up"):
 		throttle_dir = 1.0  # Increase speed_control = more throttle
-	elif Input.is_action_pressed("ui_down") or Input.is_key_pressed(KEY_S):
+	elif Input.is_action_pressed("ui_down"):
 		throttle_dir = -1.0  # Decrease speed_control = less throttle
 	
 	if throttle_dir != 0.0:
 		speed_control = clamp(speed_control + throttle_dir * THROTTLE_RESPONSE * delta, 0.0, 1.0)
-		runtime.set_speed_control(speed_control)
 	
 	# Update throttle variable for HUD (same as speed_control now)
 	throttle = speed_control
+	
+	# Always apply current speed_control to engine
+	runtime.set_speed_control(speed_control)
 	
 	# Clutch (space = disengage)
 	if Input.is_key_pressed(KEY_SPACE):
@@ -311,17 +329,8 @@ func _handle_input(delta: float) -> void:
 	else:
 		set_meta("e_was_pressed", false)
 	
-	# Starter motor (hold R)
-	var r_pressed = Input.is_key_pressed(KEY_R)
-	if r_pressed and not starter_held and ignition_on and not engine_running:
-		_start_starter()
-	elif not r_pressed and starter_held:
-		_stop_starter()
-	
-	# Check if engine started
-	if starter_held and engine_rpm > IDLE_RPM * 0.8:
-		engine_running = true
-		_stop_starter()
+	# Note: Starter is controlled automatically by fixed timer (8 seconds)
+	# Manual R key control removed to prevent interference with auto_start
 	
 	# Shift up (Left Shift)
 	if Input.is_key_pressed(KEY_SHIFT) and shift_cooldown <= 0:
@@ -410,6 +419,11 @@ func _auto_shift() -> void:
 	if shift_cooldown > 0 or clutch_engaged < 0.5:
 		return
 	
+	# CRITICAL: Don't shift until engine is actually running
+	# This prevents loading the engine during startup
+	if not engine_running:
+		return
+	
 	# Start in first gear when moving from neutral
 	if gear <= 0:
 		if throttle > AUTO_SHIFT_THROTTLE_THRESHOLD or engine_rpm > IDLE_RPM * 1.2:
@@ -481,8 +495,14 @@ func _update_vehicle_physics(delta: float) -> void:
 		# Calculate expected engine RPM based on speed and gear
 		var expected_engine_rpm = wheel_rpm * total_ratio
 		
-		# Engine produces torque (simplified - using throttle as proxy)
-		var engine_torque = throttle * 300.0 * clutch_engaged  # Nm, simplified
+		# Engine produces torque based on actual engine RPM and throttle
+		# Simplified torque curve: torque increases with RPM up to peak, then decreases
+		var engine_torque = 0.0
+		if engine_running:
+			# Simple torque curve: peaks around 5000 RPM with max 350 Nm
+			var rpm_ratio = engine_rpm / REDLINE_RPM
+			var torque_factor = max(0.0, 1.0 - pow(rpm_ratio - 0.7, 2.0) * 2.0)  # Peak around 70% redline
+			engine_torque = throttle * 350.0 * torque_factor * clutch_engaged
 		
 		# Wheel torque
 		var wheel_torque = engine_torque * total_ratio * 0.9  # 90% drivetrain efficiency
@@ -501,7 +521,7 @@ func _update_vehicle_physics(delta: float) -> void:
 		
 		# Acceleration
 		var accel = net_force / VEHICLE_MASS
-		vehicle_speed_kmh += accel * delta * 3.6  # Convert m/s² to km/h
+		vehicle_speed_kmh += accel * delta * 3.6  # Convert m/s² to km/h/s
 		vehicle_speed_kmh = max(0, vehicle_speed_kmh)  # No negative speed (for now)
 
 func _update_hud() -> void:

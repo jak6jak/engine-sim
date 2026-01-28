@@ -3,12 +3,12 @@
 importer="wav"
 type="AudioStreamWAV"
 uid="uid://4ex58fry2e86"
-path="res://.godot/imported/test_engine_14_eq_adjusted_16.wav-589f127c717237c6da3b0845d24caec5.sample"
+path="res://.godot/imported/test_engine_14_eq_adjusted_16.wav-38e8ba8d4580602f3ba95db2239c4145.sample"
 
 [deps]
 
-source_file="res://addons/engine_sim/engine-core/es/sound-library/archive/test_engine_14_eq_adjusted_16.wav"
-dest_files=["res://.godot/imported/test_engine_14_eq_adjusted_16.wav-589f127c717237c6da3b0845d24caec5.sample"]
+source_file="res://assets/sound-library/archive/test_engine_14_eq_adjusted_16.wav"
+dest_files=["res://.godot/imported/test_engine_14_eq_adjusted_16.wav-38e8ba8d4580602f3ba95db2239c4145.sample"]
 
 [params]
 

@@ -3,12 +3,12 @@
 importer="wav"
 type="AudioStreamWAV"
 uid="uid://5inpvom8knab"
-path="res://.godot/imported/smooth_39.wav-6b30143eb88a99e3ec2c8567ceecd45d.sample"
+path="res://.godot/imported/smooth_39.wav-607440a2fbee372fc9e4022d9e12aac7.sample"
 
 [deps]
 
-source_file="res://addons/engine_sim/engine-core/es/sound-library/smooth/smooth_39.wav"
-dest_files=["res://.godot/imported/smooth_39.wav-6b30143eb88a99e3ec2c8567ceecd45d.sample"]
+source_file="res://assets/sound-library/smooth/smooth_39.wav"
+dest_files=["res://.godot/imported/smooth_39.wav-607440a2fbee372fc9e4022d9e12aac7.sample"]
 
 [params]
 
