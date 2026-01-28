@@ -510,14 +510,6 @@ TEST(GasSystemTests, GasVelocityProducesScavengingEffect) {
     params.system_0 = &system1;
     params.system_1 = &system2;
 
-    csv.write("iteration");
-    csv.write("time");
-    csv.write("static_cylinder_pressure");
-    csv.write("exhaust_pressure");
-    csv.write("v_0");
-    csv.write("v_1");
-    csv.write("exhaust_static_pressure");
-
     const int steps = 10000;
     for (int i = 1; i <= steps; ++i) {
         const double staticPressure =
@@ -575,10 +567,6 @@ TEST(GasSystemTests, GasVelocityProducesScavengingEffect) {
 }
 
 TEST(GasSystemTests, GasVelocityProducesRamEffect) {
-    atg_csv::CsvData csv;
-    csv.initialize();
-    csv.m_columns = 9;
-
     constexpr double cylinderArea =
         constants::pi * units::distance(2.0, units::inch) * units::distance(2.0, units::inch);
     constexpr double runnerArea =
@@ -626,16 +614,6 @@ TEST(GasSystemTests, GasVelocityProducesRamEffect) {
     params.dt = 1 / (16 * 4000.0);
     params.direction_x = 1.0;
     params.direction_y = 0.0;
-
-    csv.write("iteration");
-    csv.write("time");
-    csv.write("crank_angle");
-    csv.write("cylinder_volume");
-    csv.write("n_mol");
-    csv.write("cylinder_air_velocity");
-    csv.write("runner_air_velocity");
-    csv.write("cylinder_pressure");
-    csv.write("runner_pressure");
 
     constexpr double speed = 3000; // rpm
     constexpr double stroke = units::distance(4.0, units::inch);
@@ -698,21 +676,7 @@ TEST(GasSystemTests, GasVelocityProducesRamEffect) {
             max_v = cylinder.volume();
             max_v_angle = angle;
         }
-
-        ++csv.m_rows;
-        csv.write(std::to_string(i).c_str());
-        csv.write(std::to_string(i * params.dt).c_str());
-        csv.write(std::to_string(angle).c_str());
-        csv.write(std::to_string(cylinder.volume()).c_str());
-        csv.write(std::to_string(cylinder.n()).c_str());
-        csv.write(std::to_string(velocity_x_0).c_str());
-        csv.write(std::to_string(velocity_x_1).c_str());
-        csv.write(std::to_string(P_0).c_str());
-        csv.write(std::to_string(P_1).c_str());
     }
-
-    csv.writeCsv("gas_system_test_output.csv", nullptr, '\t');
-    csv.destroy();
 
     const double delay = max_n_angle - max_v_angle;
     const double m_n = max_n;
@@ -721,10 +685,6 @@ TEST(GasSystemTests, GasVelocityProducesRamEffect) {
 }
 
 TEST(GasSystemTests, GasVelocityStabilizesInClosedSystem) {
-    atg_csv::CsvData csv;
-    csv.initialize();
-    csv.m_columns = 2;
-
     GasSystem system1;
     system1.initialize(
         units::pressure(100, units::psi),
@@ -740,19 +700,9 @@ TEST(GasSystemTests, GasVelocityStabilizesInClosedSystem) {
     const double initialSystemEnergy = system1.totalEnergy();
     const double initialMolecules = system1.n();
 
-    csv.write("time");
-    csv.write("velocity");
-
     const int steps = 10000;
     const double dt = 1 / 10000.0;
     for (int i = 1; i <= steps; ++i) {
         system1.updateVelocity(dt);
-
-        ++csv.m_rows;
-        csv.write(std::to_string(i * dt).c_str());
-        csv.write(std::to_string(system1.velocity_x()).c_str());
     }
-
-    csv.writeCsv("gas_system_test_output.csv", nullptr, '\t');
-    csv.destroy();
 }
